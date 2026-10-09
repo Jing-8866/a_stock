@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>A股选股分析工具</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #0a0e27; color: #e0e0e0; min-height: 100vh; -webkit-tap-highlight-color: transparent; }
+.header { background: linear-gradient(135deg, #1a1f4e 0%, #0a0e27 100%); padding: 15px 20px; border-bottom: 1px solid #1e2d5a; display: flex; align-items: center; gap: 15px; }
+.header h1 { font-size: 18px; color: #00d4ff; flex: 1; }
+.header .subtitle { font-size: 11px; color: #6a7a9e; margin-top: 2px; }
+.container { max-width: 1400px; margin: 0 auto; padding: 15px; }
+.card { background: #111836; border-radius: 12px; padding: 15px; margin-bottom: 15px; border: 1px solid #1e2d5a; }
+.card-title { font-size: 14px; font-weight: 600; color: #00d4ff; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.input-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+input[type="text"], select { background: #0a0e27; border: 1px solid #2a3a6a; border-radius: 6px; padding: 8px 12px; color: #e0e0e0; font-size: 13px; outline: none; transition: border 0.3s; min-height: 36px; }
+input[type="text"]:focus, select:focus { border-color: #00d4ff; }
+button { background: linear-gradient(135deg, #00d4ff, #0099cc); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; transition: all 0.3s; font-weight: 500; min-height: 36px; white-space: nowrap; }
+button:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(0,212,255,0.3); }
+button:active { transform: translateY(0); }
+button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+button.secondary { background: linear-gradient(135deg, #2a3a6a, #1a2a5a); }
+button.danger { background: linear-gradient(135deg, #ff4757, #cc3344); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+.result-area { background: #0a0e27; border-radius: 8px; padding: 15px; margin-top: 12px; min-height: 100px; border: 1px solid #1e2d5a; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.loading { display: inline-block; width: 16px; height: 16px; border: 2px solid #2a3a6a; border-top-color: #00d4ff; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 6px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin: 2px; }
+.tag-buy { background: rgba(0,200,100,0.2); color: #00c864; }
+.tag-wait { background: rgba(255,180,0,0.2); color: #ffb400; }
+.tag-sell { background: rgba(255,70,70,0.2); color: #ff4646; }
+.tag-info { background: rgba(0,212,255,0.15); color: #00d4ff; }
+.score-bar { height: 8px; background: #1a2a5a; border-radius: 4px; overflow: hidden; margin: 5px 0; }
+.score-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2a3a6a; color: #6a7a9e; font-weight: 500; white-space: nowrap; }
+td { padding: 6px 8px; border-bottom: 1px solid #1a2a5a; }
+tr:hover td { background: rgba(0,212,255,0.03); }
+.screener-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.screener-row select, .screener-row input { flex: 1; min-width: 100px; }
+.stock-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 6px; background: #0a0e27; margin-bottom: 4px; border: 1px solid #1e2d5a; flex-wrap: nowrap; gap: 8px; min-height: 40px; flex: 1 1 auto; min-width: 220px; max-width: 100%; }
+.stock-item:hover { border-color: #00d4ff; }
+.stock-item > div:first-child { flex: 1 1 auto; min-width: 0; }
+.stock-item > div:last-child { flex: 0 0 auto; display: flex; gap: 4px; }
+.error-msg { color: #ff4646; font-size: 12px; margin-top: 8px; }
+.success-msg { color: #00c864; font-size: 12px; margin-top: 8px; }
+button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color: #0a0e27; }
+.limit-input { width: 72px; text-align: center; background: #111836; border: 1px solid #2a3a6e; color: #e0e6ff; border-radius: 6px; padding: 6px 4px; font-size: 12px; outline: none; min-height: 32px; }
+.limit-input:focus { border-color: #22d3ee; }
+.market-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.market-tab { padding: 5px 10px; border-radius: 6px; font-size: 12px; background: #16204a; color: #8ea0c8; border: 1px solid #24325f; cursor: pointer; white-space: nowrap; }
+.market-tab:hover { color: #e0e6ff; }
+.market-tab.active { background: linear-gradient(135deg, #22d3ee, #0ea5e9); color: #0a0e27; border-color: transparent; }
+.market-tab .tab-count { margin-left: 4px; font-size: 10px; opacity: .8; }
+.pager { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.pager-btn { padding: 4px 10px; font-size: 12px; }
+.pager-btn:disabled { opacity: .4; cursor: not-allowed; }
+.input-wrap { position: relative; display: flex; }
+.input-wrap input { width: 100%; padding-right: 28px; }
+.clear-input { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: transparent; color: #6a7a9e; padding: 2px 4px; font-size: 16px; line-height: 1; border-radius: 50%; cursor: pointer; }
+.clear-input:hover { color: #ff4646; transform: translateY(-50%); box-shadow: none; }
+
+/* ================= 移动端适配 ================= */
+@media (max-width: 768px) {
+  .header { padding: 12px 15px; }
+  .header h1 { font-size: 16px; }
+  .header .subtitle { font-size: 10px; }
+  .container { padding: 10px; }
+  .card { padding: 12px; margin-bottom: 12px; }
+  .card-title { font-size: 13px; margin-bottom: 10px; gap: 5px; }
+  .input-group { gap: 6px; }
+  input[type="text"], select { padding: 6px 10px; font-size: 12px; min-height: 34px; }
+  button { padding: 6px 12px; font-size: 12px; min-height: 34px; }
+  table { font-size: 11px; }
+  th, td { padding: 5px 6px; }
+  .stock-item { flex-direction: row; min-height: 36px; padding: 4px 8px; min-width: 180px; }
+  .stock-item > div:first-child { flex: 1 1 auto; }
+  .stock-item > div:last-child { flex: 0 0 auto; }
+  .stock-item button { width: auto; margin-top: 0; padding: 2px 6px; font-size: 10px; }
+  .market-tabs { gap: 4px; }
+  .market-tab { padding: 4px 8px; font-size: 11px; }
+  .pager { gap: 8px; }
+  .pager-btn { padding: 3px 8px; font-size: 11px; }
+  .input-wrap input { padding-right: 24px; }
+  .clear-input { right: 4px; font-size: 14px; padding: 1px 3px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>📈 A股选股分析工具</h1>
+    <div class="subtitle">实时行情 · 四维评分 · 条件筛选</div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- 单股分析 -->
+  <div class="card">
+    <div class="card-title">🔍 单股分析</div>
+    <div class="input-group">
+      <div class="input-wrap" style="flex:1; min-width:250px;">
+        <input type="text" id="stockCode" placeholder="输入股票代码或名称，如 600519 / sh600519 / 贵州茅台">
+        <button type="button" class="clear-input" onclick="clearStockInput()" title="清空输入">✕</button>
+      </div>
+      <button onclick="analyzeStock()">📊 分析</button>
+    </div>
+    <div id="analyzeMsg"></div>
+    <div id="analyzeResult" class="result-area" style="display:none;"></div>
+  </div>
+
+  <!-- 股票走势图 -->
+  <div class="card" id="chartCard" style="display:none;">
+    <div class="card-title">📈 股票走势图 <span id="chartName" style="font-size:13px;color:#6a7a9e;"></span></div>
+    <div class="input-group">
+      <button class="market-tab chart-tab active" data-period="minute" onclick="loadChart('minute')">分时</button>
+      <button class="market-tab chart-tab" data-period="day5" onclick="loadChart('day5')">五日</button>
+      <button class="market-tab chart-tab" data-period="day" onclick="loadChart('day')">日K</button>
+      <button class="market-tab chart-tab" data-period="week" onclick="loadChart('week')">周K</button>
+      <button class="market-tab chart-tab" data-period="month" onclick="loadChart('month')">月K</button>
+    </div>
+    <div id="chartMsg" style="margin-top:8px;"></div>
+    <div id="chartContainer" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- 自选股 -->
+  <div class="card">
+    <div class="card-title">⭐ 自选股</div>
+    <div class="input-group">
+      <button onclick="loadWatchlist()">📋 刷新</button>
+      <button class="danger" onclick="clearWatchlist()">🗑️ 清空</button>
+    </div>
+    <div id="watchlistResult" class="result-area" style="display:none;"></div>
+  </div>
+
+  <!-- 全市场扫描 -->
+  <div class="card">
+    <div class="card-title">🌐 全市场扫描</div>
+    <div class="input-group">
+      <button onclick="scanMarket()">🔄 执行扫描</button>
+      <button class="secondary" onclick="loadRank('changePercent','desc')">📈 涨幅排行</button>
+      <button class="secondary" onclick="loadRank('changePercent','asc')">📉 跌幅排行</button>
+      <button class="secondary" onclick="loadRank('turnover','desc')">💧 换手排行</button>
+      <span style="color:#6a7a9e;font-size:13px;">返回条数</span>
+      <input type="number" id="scanLimit" value="5" min="1" max="100" class="limit-input" title="返回条数">
+    </div>
+    <div id="scanMsg"></div>
+    <div id="scanResult" class="result-area" style="display:none;"></div>
+  </div>
+
+  <!-- 条件筛选 -->
+  <div class="card">
+    <div class="card-title">🎯 条件筛选</div>
+    <div id="screenerConditions">
+      <div class="screener-row">
+        <select onchange="updateScreenerField(this)">
+          <option value="pe">市盈率(PE)</option>
+          <option value="pb">市净率(PB)</option>
+          <option value="changePercent">涨跌幅</option>
+          <option value="turnover">换手率</option>
+          <option value="price">股价</option>
+        </select>
+        <select>
+          <option value="lt">&lt;</option>
+          <option value="gt">&gt;</option>
+          <option value="eq">=</option>
+        </select>
+        <input type="text" placeholder="数值" value="20">
+        <button class="secondary" onclick="addScreenerRow(this)">+</button>
+      </div>
+    </div>
+    <div class="input-group" style="margin-top:10px;">
+      <button onclick="runScreener()">🚀 执行筛选</button>
+      <button class="secondary" onclick="presetScreener('dividend')">高股息低估值</button>
+      <button class="secondary" onclick="presetScreener('growth')">白马成长</button>
+      <button class="secondary" onclick="presetScreener('cashflow')">现金流健康</button>
+      <span style="color:#6a7a9e;font-size:13px;">返回条数</span>
+      <input type="number" id="screenerLimit" value="5" min="1" max="100" class="limit-input" title="返回条数">
+    </div>
+    <div id="screenerMsg"></div>
+    <div id="screenerResult" class="result-area" style="display:none;"></div>
+  </div>
+
+</div>
+
+<script>
+// ============ 配置 ============
+const API = 'http://localhost:7373/api'
+let watchlist = []
+let lastAnalyzedCode = null
+
+// 初始化时转换旧的字符串格式为对象格式
+function initWatchlist() {
+  const stored = localStorage.getItem('watchlist')
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed)) {
+        // 如果是字符串数组，转换为对象数组
+        if (parsed.length > 0 && typeof parsed[0] === 'string') {
+          watchlist = parsed.map(code => ({
+            code: code,
+            name: code,
+            addedAt: new Date().toISOString()
+          }))
+          localStorage.setItem('watchlist', JSON.stringify(watchlist))
+        } else {
+          watchlist = parsed
+        }
+      }
+    } catch (e) {
+      console.error('初始化自选列表失败:', e)
+      watchlist = []
+    }
+  }
+}
+initWatchlist()
+
+// ============ 工具函数 ============
+function showLoading(el) { el.innerHTML = '<span class="loading"></span>分析中...' }
+function showMsg(el, msg, type) {
+  el.innerHTML = `<div class="${type === 'error' ? 'error-msg' : 'success-msg'}">${msg}</div>`
+}
+function normalizeCode(code) {
+  code = code.trim().toLowerCase()
+  if (/^\d{6}$/.test(code)) {
+    return code.startsWith('6') ? 'sh' + code : 'sz' + code
+  }
+  return code
+}
+
+// 获取市场归属（含板块：主板 / 创业板 / 科创板）
+function getMarketFromCode(code) {
+  code = String(code || '').trim().toLowerCase()
+  const num = code.replace(/^(sh|sz|bj)/, '')
+  if (!/^\d{6}$/.test(num)) return '未知市场'
+  if (num.startsWith('688') || num.startsWith('689')) return '沪市(科创板)'
+  if (num.startsWith('3')) return '深市(创业板)'
+  if (num.startsWith('6')) return '沪市(主板)'
+  if (num.startsWith('0')) return '深市(主板)'
+  if (num.startsWith('4') || num.startsWith('8') || num.startsWith('9')) return '北交所'
+  return '未知市场'
+}
+
+// 读取返回条数限制（默认 10，范围 1-100）
+function getLimit(id) {
+  const el = document.getElementById(id)
+  const v = el ? parseInt(el.value) : 10
+  return Math.max(1, Math.min(100, isNaN(v) ? 10 : v))
+}
+
+// 获取股票信息显示格式
+function getStockDisplay(code, name) {
+  const market = getMarketFromCode(code)
+  return `${market} | ${code} | ${name}`
+}
+
+// 格式化数字
+function formatNumber(num, decimals = 2) {
+  if (num === null || num === undefined || isNaN(num)) return 'N/A'
+  return num.toFixed(decimals)
+}
+
+// 隐藏结果面板（无有效结果时保持不展示）
+function hideResult(el) {
+  el = el || document.getElementById('analyzeResult')
+  if (!el) return
+  el.style.display = 'none'
+  el.innerHTML = ''
+  const cc = document.getElementById('chartCard')
+  if (cc) cc.style.display = 'none'
+  if (chartTimer) { clearInterval(chartTimer); chartTimer = null }
+}
+
+// 清空输入框及其结果
+function clearStockInput() {
+  const input = document.getElementById('stockCode')
+  input.value = ''
+  lastAnalyzedCode = null
+  const msgEl = document.getElementById('analyzeMsg')
+  if (msgEl) msgEl.innerHTML = ''
+  hideResult()
+  updateFavButton()
+  input.focus()
+}
+
+// ============ 单股分析（支持代码或名称搜索） ============
+async function analyzeStock() {
+  const raw = document.getElementById('stockCode').value.trim()
+  const msgEl = document.getElementById('analyzeMsg')
+  const resultEl = document.getElementById('analyzeResult')
+  if (!raw) { hideResult(resultEl); showMsg(msgEl, '请输入股票代码或名称', 'error'); return }
+
+  // 纯代码（可带 sh/sz/bj 前缀）→ 直接分析
+  if (/^(sh|sz|bj)?\d{6}$/i.test(raw.replace(/\s/g, ''))) {
+    return runAnalyze(normalizeCode(raw))
+  }
+
+  // 名称 / 关键词 → 搜索
+  showLoading(msgEl)
+  resultEl.style.display = 'block'
+  resultEl.innerHTML = '<span class="loading"></span>正在搜索…'
+  try {
+    const res = await fetch(`${API}/search?q=${encodeURIComponent(raw)}`)
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    const list = Array.isArray(data) ? data : (data.results || [])
+    if (!list.length) {
+      hideResult(resultEl)
+      showMsg(msgEl, '⚠️ 未找到匹配的股票，请检查名称或改用代码', 'error')
+      return
+    }
+    if (list.length === 1) return runAnalyze(list[0].code)
+    resultEl.innerHTML = `
+      <div style="margin-bottom:10px;color:#6a7a9e;">匹配到 ${list.length} 只，请选择要分析的股票：</div>
+      ${list.map(s => `<div class="stock-item">
+        <div><b>${s.name}</b> <span style="color:#6a7a9e;">${s.code} · ${getMarketFromCode(s.code)}</span></div>
+        <button class="secondary" style="padding:4px 12px;font-size:12px;" onclick="document.getElementById('stockCode').value='${s.code}';analyzeStock()">分析</button>
+      </div>`).join('')}
+    `
+    showMsg(msgEl, `✅ 匹配到 ${list.length} 只，请选择`, 'success')
+  } catch (e) {
+    hideResult(resultEl)
+    showMsg(msgEl, `❌ 搜索失败（${e.message}）`, 'error')
+  }
+}
+
+// 按标准代码拉取行情并渲染
+async function runAnalyze(code) {
+  const msgEl = document.getElementById('analyzeMsg')
+  const resultEl = document.getElementById('analyzeResult')
+  lastAnalyzedCode = normalizeCode(code)
+  showLoading(msgEl)
+  resultEl.style.display = 'block'
+  resultEl.innerHTML = '<span class="loading"></span>正在获取行情数据...'
+  try {
+    const res = await fetch(`${API}/quote/${code}`)
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    
+    // 计算评分
+    let score = 0
+    const peScore = data.pe > 0 && data.pe < 15 ? 25 : (data.pe < 30 ? 15 : 5)
+    const changeScore = data.changePercent > 0 ? 20 : 5
+    const volScore = data.volume > 0 ? 15 : 5
+    score = peScore + changeScore + volScore + 20 // 基础分
+    score = Math.min(100, score)
+    
+    let verdict = score >= 70 ? '<span class="tag tag-buy">✅ 建议买入</span>' : score >= 50 ? '<span class="tag tag-wait">⏳ 观望为主</span>' : '<span class="tag tag-sell">❌ 不建议</span>'
+    
+    // ===== 估值股价（基于 PE 15~30 倍、PB 2~5 倍合理区间推算） =====
+    let valHtml = '<div style="color:#6a7a9e;">缺少 PE/PB 数据，无法估值</div>'
+    if (data.pe > 0 && data.pb > 0 && data.price > 0) {
+      const eps = data.price / data.pe
+      const bps = data.price / data.pb
+      const peLow = eps * 15, peHigh = eps * 30
+      const pbLow = bps * 2, pbHigh = bps * 5
+      const lo = Math.min(peLow, pbLow), hi = Math.max(peHigh, pbHigh)
+      const pos = data.price < lo ? '低估' : (data.price > hi ? '高估' : '合理')
+      const posColor = pos === '低估' ? '#00c864' : (pos === '高估' ? '#ff4646' : '#ffb400')
+      valHtml = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;">
+          <div><span style="color:#6a7a9e;">PE估值价(15~30倍)</span><br><span style="font-weight:600;">${formatNumber(peLow,2)} ~ ${formatNumber(peHigh,2)} 元</span></div>
+          <div><span style="color:#6a7a9e;">PB估值价(2~5倍)</span><br><span style="font-weight:600;">${formatNumber(pbLow,2)} ~ ${formatNumber(pbHigh,2)} 元</span></div>
+          <div><span style="color:#6a7a9e;">当前股价</span><br><span style="font-weight:600;">${formatNumber(data.price,2)} 元</span></div>
+          <div><span style="color:#6a7a9e;">估值结论</span><br><span style="font-weight:600;color:${posColor};">${pos}</span></div>
+        </div>`
+    }
+    
+    resultEl.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+        <h3 style="color:#00d4ff;margin:0;">${getStockDisplay(data.code, data.name)}</h3>
+        <button class="secondary" id="favBtn" onclick="toggleFavorite()">☆ 加入自选</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:15px;">
+        <div><span style="color:#6a7a9e;">最新价</span><br><span style="font-size:20px;font-weight:600;">${formatNumber(data.price, 2)}</span></div>
+        <div><span style="color:#6a7a9e;">涨跌幅</span><br><span style="font-size:20px;font-weight:600;color:${data.changePercent>=0?'#ff4646':'#00c864'}">${data.changePercent>=0?'+':''}${formatNumber(data.changePercent, 2)}%</span></div>
+        <div><span style="color:#6a7a9e;">开盘价</span><br><span style="font-size:18px;font-weight:600;">${data.open ? formatNumber(data.open, 2) : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">最高价</span><br><span style="font-size:18px;font-weight:600;">${data.high ? formatNumber(data.high, 2) : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">最低价</span><br><span style="font-size:18px;font-weight:600;">${data.low ? formatNumber(data.low, 2) : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">成交量</span><br><span style="font-size:18px;font-weight:600;">${data.volume ? formatNumber(data.volume, 0) : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">PE</span><br><span style="font-size:20px;font-weight:600;">${data.pe ? formatNumber(data.pe, 2) : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">PB</span><br><span style="font-size:20px;font-weight:600;">${data.pb ? formatNumber(data.pb, 2) : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">换手率</span><br><span style="font-size:20px;font-weight:600;">${data.turnover ? formatNumber(data.turnover, 2)+'%' : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">成交额</span><br><span style="font-size:20px;font-weight:600;">${data.volume ? formatNumber(data.volume/10000, 2)+'万' : 'N/A'}</span></div>
+      </div>
+      <div style="margin:15px 0;">
+        <span style="color:#6a7a9e;">综合评分：</span>
+        <strong style="font-size:24px;color:${score>=70?'#00c864':score>=50?'#ffb400':'#ff4646'}">${score}</strong> / 100
+        <div class="score-bar" style="width:300px;display:inline-block;vertical-align:middle;margin-left:10px;">
+          <div class="score-fill" style="width:${score}%;background:${score>=70?'#00c864':score>=50?'#ffb400':'#ff4646'}"></div>
+        </div>
+      </div>
+      <div style="margin:10px 0;">${verdict}</div>
+      <div style="margin:15px 0;padding:12px;background:#111836;border-radius:8px;border:1px solid #1e2d5a;">
+        <div style="color:#6a7a9e;margin-bottom:8px;">💎 估值股价</div>
+        ${valHtml}
+      </div>
+      <div style="margin-top:15px;padding:12px;background:#111836;border-radius:8px;border:1px solid #1e2d5a;">
+        <div style="color:#6a7a9e;margin-bottom:8px;">💡 操作建议</div>
+        ${score >= 70 ? '当前估值合理且走势偏强，可逢低分批建仓，建议仓位 20%-30%，止损设在前低下方 5%。' : score >= 50 ? '基本面尚可但趋势未明，建议观望为主，等待放量突破关键阻力位后再介入。' : '当前估值偏高或走势偏弱，不建议追高，可关注其他标的。'}
+      </div>
+    `
+    updateFavButton()
+    showStockChart(data.code, data.name)
+    showMsg(msgEl, `✅ ${data.name} 分析完成`, 'success')
+  } catch (e) {
+    hideResult(resultEl)
+    showMsg(msgEl, `❌ 分析失败（${e.message}）`, 'error')
+  }
+}
+
+// ============ 股票走势图 ============
+let currentChartCode = null
+let chartTimer = null
+
+function showStockChart(code, name) {
+  currentChartCode = normalizeCode(code)
+  const card = document.getElementById('chartCard')
+  card.style.display = 'block'
+  document.getElementById('chartName').textContent = `${name || ''} ${currentChartCode}`
+  loadChart('minute')
+}
+
+async function loadChart(period) {
+  if (!currentChartCode) return
+  // 切换视图时停止分时轮询
+  if (chartTimer) { clearInterval(chartTimer); chartTimer = null }
+  document.querySelectorAll('#chartCard .chart-tab').forEach(b => b.classList.toggle('active', b.dataset.period === period))
+  const msgEl = document.getElementById('chartMsg')
+  const container = document.getElementById('chartContainer')
+  msgEl.innerHTML = '<span class="loading"></span>加载走势图...'
+  container.innerHTML = ''
+  try {
+    const apiPeriod = period === 'day5' ? 'day' : period
+    const count = period === 'day5' ? 5 : (period === 'minute' ? 1 : 320)
+    const res = await fetch(`${API}/kline/${currentChartCode}?period=${apiPeriod}&count=${count}`)
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    msgEl.innerHTML = ''
+    if (data.period === 'minute' && data.points) {
+      renderLineChart(container, data.points.map(p => ({ x: p.time, y: p.price })), { prevClose: data.prevClose, timeLabel: true })
+      // 分时视图每 30 秒自动拉取最新分时，实现实时跟进
+      chartTimer = setInterval(() => {
+        const active = document.querySelector('#chartCard .chart-tab.active')
+        if (active && active.dataset.period === 'minute' && currentChartCode) loadChart('minute')
+      }, 30000)
+    } else if (data.klines) {
+      renderLineChart(container, data.klines.map(k => ({ x: k.date, y: k.close })), {})
+    } else {
+      msgEl.innerHTML = '<div class="error-msg">未获取到走势数据</div>'
+    }
+  } catch (e) {
+    msgEl.innerHTML = `<div class="error-msg">走势图加载失败（${e.message}）</div>`
+  }
+}
+
+function fmtTimeLabel(t) {
+  const s = String(t || '').replace(/[^0-9]/g, '').slice(-4)
+  return s.length === 4 ? s.slice(0, 2) + ':' + s.slice(2) : String(t || '')
+}
+
+function renderLineChart(container, pts, opts) {
+  opts = opts || {}
+  if (!pts || !pts.length) { container.innerHTML = '<div style="color:#6a7a9e;">暂无数据</div>'; return }
+  const values = pts.map(p => p.y).filter(v => typeof v === 'number' && isFinite(v) && v > 0)
+  if (!values.length) { container.innerHTML = '<div style="color:#6a7a9e;">暂无有效数据</div>'; return }
+  // 移动端自适应宽度
+  const isMobile = window.innerWidth <= 768
+  const W = isMobile ? window.innerWidth - 24 : 800
+  const H = isMobile ? 200 : 240
+  const pl = isMobile ? 48 : 56
+  const pr = isMobile ? 12 : 16
+  const pt = isMobile ? 14 : 18
+  const pb = isMobile ? 28 : 30
+  let lo = Math.min.apply(null, values), hi = Math.max.apply(null, values)
+  const span = (hi - lo) || Math.abs(hi) * 0.02 || 1
+  lo -= span * 0.08; hi += span * 0.08
+  const iw = W - pl - pr, ih = H - pt - pb
+  const n = pts.length
+
+  // 分时：固定交易日时间轴 09:30–11:30 / 13:00–15:00，午休间隙压缩
+  const timeAxis = !!opts.timeLabel
+  const TS_BASE = 9 * 60 + 30
+  const TS_NOON = 11 * 60 + 30
+  const timeToIdx = t => {
+    const s = String(t || '').replace(/[^0-9]/g, '').slice(-4)
+    const m = s.match(/^(\d{2})(\d{2})$/)
+    if (!m) return 0
+    const hh = parseInt(m[1], 10)
+    const mm = parseInt(m[2], 10)
+    if (hh > 23 || mm > 59) return 0
+    let v = (hh * 60 + mm) - TS_BASE
+    if (v > TS_NOON - TS_BASE) v -= 85
+    return Math.max(0, Math.min(T_MAX, v))
+  }
+  const T_MAX = timeAxis ? 246 : (n - 1)
+  const xs = timeAxis ? pts.map(p => timeToIdx(p.x)) : pts.map((p, i) => i)
+  const x = i => (T_MAX <= 0 ? pl + iw / 2 : pl + (xs[i] / T_MAX) * iw)
+  const y = v => pt + ih - ((v - lo) / (hi - lo)) * ih
+  const firstVal = values[0], lastVal = values[values.length - 1], prevClose = opts.prevClose
+  const baseVal = (timeAxis && prevClose != null) ? prevClose : firstVal
+  const lineColor = lastVal >= baseVal ? '#ff4646' : '#00c864'
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map(f => pt + ih * f)
+  const yText = yy => (hi - ((yy - pt) / ih) * (hi - lo)).toFixed(2)
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.y).toFixed(1)}`).join('')
+  const xLabel = i => {
+    const raw = String(pts[i].x)
+    if (timeAxis) {
+      // 分时：格式化时间为 HH:MM
+      const s = raw.replace(/[^0-9]/g, '').slice(-4)
+      return s.length === 4 ? s.slice(0, 2) + ':' + s.slice(2) : raw
+    } else {
+      // 非分时：显示完整日期 YYYY-MM-DD
+      return raw
+    }
+  }
+
+  // X 轴刻度：分时固定为交易日时段标签
+  let tickDefs
+  if (timeAxis) {
+    tickDefs = [
+      { idx: timeToIdx('0930'), label: '09:30' },
+      { idx: timeToIdx('1030'), label: '10:30' },
+      { idx: (timeToIdx('1130') + timeToIdx('1300')) / 2, label: '11:30/13:00' },
+      { idx: timeToIdx('1400'), label: '14:00' },
+      { idx: timeToIdx('1500'), label: '15:00' }
+    ].map(t => ({ px: pl + (t.idx / T_MAX) * iw, label: t.label, anchor: 'middle' }))
+  } else {
+    const idxs = n <= 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1]
+    tickDefs = idxs.map(i => ({ px: x(i), label: xLabel(i), anchor: (i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle')) }))
+  }
+
+  // 鼠标位置 → 最近数据点
+  const nearestIndex = px => {
+    if (!timeAxis) return Math.max(0, Math.min(n - 1, Math.round(((px - pl) / iw) * (n - 1))))
+    const target = Math.max(0, Math.min(T_MAX, ((px - pl) / iw) * T_MAX))
+    let best = 0, dist = Infinity
+    for (let k = 0; k < n; k++) {
+      const d = Math.abs(xs[k] - target)
+      if (d < dist) { dist = d; best = k }
+    }
+    return best
+  }
+
+  let prevLine = ''
+  if (timeAxis && prevClose != null && prevClose >= lo && prevClose <= hi) {
+    prevLine = `<line x1="${pl}" y1="${y(prevClose).toFixed(1)}" x2="${W - pr}" y2="${y(prevClose).toFixed(1)}" stroke="#8ea0c8" stroke-width="1" stroke-dasharray="4 3"/>`
+  }
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;cursor:crosshair;">
+      ${gridLines.map(yy => `<line x1="${pl}" y1="${yy}" x2="${W - pr}" y2="${yy}" stroke="#1e2d5a" stroke-width="1"/><text x="${pl - 6}" y="${yy + 4}" fill="#6a7a9e" font-size="${isMobile ? '10' : '11'}" text-anchor="end">${yText(yy)}</text>`).join('')}
+      ${prevLine}
+      <path d="${path}" fill="none" stroke="${lineColor}" stroke-width="${isMobile ? '1.5' : '1.8'}" stroke-linejoin="round" stroke-linecap="round"/>
+      ${n > 1 ? `<circle cx="${x(n - 1).toFixed(1)}" cy="${y(lastVal).toFixed(1)}" r="3" fill="${lineColor}"/>` : ''}
+      ${tickDefs.map(t => `<text x="${t.px.toFixed(1)}" y="${H - 6}" fill="#6a7a9e" font-size="${isMobile ? '10' : '11'}" text-anchor="${t.anchor}">${t.label}</text>`).join('')}
+      <g data-tip></g>
+    </svg>`
+
+  // 鼠标悬浮：显示对应时刻的时间与价格
+  const svg = container.querySelector('svg')
+  const tip = svg.querySelector('[data-tip]')
+  const toViewBox = (e) => {
+    const rect = svg.getBoundingClientRect()
+    return { x: (e.clientX - rect.left) * (W / rect.width), y: (e.clientY - rect.top) * (H / rect.height) }
+  }
+  svg.addEventListener('mousemove', (e) => {
+    const p = toViewBox(e)
+    if (p.x < pl || p.x > W - pr || p.y < pt || p.y > H - pb) { tip.innerHTML = ''; return }
+    const i = nearestIndex(p.x)
+    const px = x(i), py = y(pts[i].y)
+    const fontSize = isMobile ? 10 : 12
+    const strokeWidth = isMobile ? 2 : 3
+    tip.innerHTML = `
+      <line x1="${px.toFixed(1)}" y1="${pt}" x2="${px.toFixed(1)}" y2="${pt + ih}" stroke="#8ea0c8" stroke-width="1" stroke-dasharray="3 3"/>
+      <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" fill="${lineColor}" stroke="#0a0e27" stroke-width="1.5"/>
+      <g>
+        <text x="${pl + 4}" y="${pt - 4}" fill="#6a7a9e" font-size="${isMobile ? 10 : 11}" text-anchor="start">${xLabel(i)}</text>
+        <text x="${pl + 4}" y="${pt + 8}" fill="#e0e6ff" font-size="${isMobile ? 12 : 14}" text-anchor="start" font-weight="600">${formatNumber(pts[i].y, 2)} 元</text>
+      </g>`
+  })
+  svg.addEventListener('mouseleave', () => { tip.innerHTML = '' })
+}
+
+// ============ 自选股 增删与按钮状态 ============
+function isInWatchlist(code) {
+  if (!code) return false
+  const bare = String(code).replace(/^(sh|sz|bj)/, '')
+  return watchlist.some(i => String(i.code).replace(/^(sh|sz|bj)/, '') === bare)
+}
+
+// 单股分析区按钮：在自选中→填充图标+取消自选；否则→空心图标+加入自选
+function updateFavButton() {
+  const btn = document.getElementById('favBtn')
+  if (!btn) return
+  const inList = isInWatchlist(lastAnalyzedCode)
+  btn.innerHTML = inList ? '⭐ 取消自选' : '☆ 加入自选'
+  btn.classList.toggle('fav-active', inList)
+}
+
+// 按标准代码加入自选
+async function addCodeToWatchlist(code, opts) {
+  opts = opts || {}
+  code = normalizeCode(code)
+  if (!/^(sh|sz|bj)?\d{6}$/i.test(code)) { if (!opts.silent) alert('无效的股票代码'); return false }
+  if (isInWatchlist(code)) { if (!opts.silent) alert('已在自选列表中'); return false }
+  try {
+    const res = await fetch(`${API}/quote/${code}`)
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    watchlist.push({
+      code,
+      name: data.name || code,
+      price: data.price,
+      changePercent: data.changePercent,
+      market: getMarketFromCode(code),
+      addedAt: new Date().toISOString()
+    })
+    localStorage.setItem('watchlist', JSON.stringify(watchlist))
+    loadWatchlist()
+    updateFavButton()
+    if (!opts.silent) showMsg(document.getElementById('analyzeMsg'), `✅ 已加入自选: ${data.name || code} (${code})`, 'success')
+    return true
+  } catch (e) {
+    if (!opts.silent) alert('加入自选失败: ' + e.message)
+    return false
+  }
+}
+
+// 扫描/筛选列表中的快捷加入
+function quickAddWatchlist(code) {
+  return addCodeToWatchlist(code)
+}
+
+// 单股分析区的"加入/取消自选"切换
+async function toggleFavorite() {
+  const code = lastAnalyzedCode
+  if (!code) { alert('请先分析一只股票'); return }
+  if (isInWatchlist(code)) {
+    removeFromWatchlist(code)
+    showMsg(document.getElementById('analyzeMsg'), `已取消自选: ${code}`, 'success')
+  } else {
+    await addCodeToWatchlist(code)
+  }
+  updateFavButton()
+}
+
+// ============ 市场TAB + 分页表格（通用） ============
+const MARKET_TABS = ['主板', '创业板', '科创板', '北交所']
+const PAGERS = {}
+
+function marketGroupOf(code) {
+  const m = getMarketFromCode(code)
+  if (m.indexOf('科创') >= 0) return '科创板'
+  if (m.indexOf('创业') >= 0) return '创业板'
+  if (m.indexOf('主板') >= 0) return '主板'
+  if (m.indexOf('北交所') >= 0) return '北交所'
+  return '其它'
+}
+
+function createPagedMarketTable(id, rows, opts) {
+  const ctrl = {
+    rows: rows || [],
+    pageSize: 10,
+    groups: { 全部: [], 主板: [], 创业板: [], 科创板: [], 北交所: [], 其它: [] },
+    state: { market: '全部', page: 1 },
+    opts: opts || {}
+  }
+  ctrl.rows.forEach(r => {
+    const g = marketGroupOf(r.code)
+    if (!ctrl.groups[g]) ctrl.groups[g] = []
+    ctrl.groups[g].push(r)
+    ctrl.groups['全部'].push(r)
+  })
+  ctrl.render = function() {
+    const list = ctrl.groups[ctrl.state.market] || []
+    const totalPages = Math.max(1, Math.ceil(list.length / ctrl.pageSize))
+    if (ctrl.state.page > totalPages) ctrl.state.page = totalPages
+    const start = (ctrl.state.page - 1) * ctrl.pageSize
+    const pageRows = list.slice(start, start + ctrl.pageSize)
+    const tabKeys = ['全部'].concat(MARKET_TABS).concat(['其它'])
+    const tabHtml = tabKeys.map(k => {
+      const cnt = ctrl.groups[k] ? ctrl.groups[k].length : 0
+      return `<button class="market-tab ${ctrl.state.market===k?'active':''}" onclick="setPagedMarket('${id}','${k}')">${k}<span class="tab-count">${cnt}</span></button>`
+    }).join('')
+    const rowHtml = pageRows.length
+      ? pageRows.map((s, i) => ctrl.opts.row(s, start + i + 1)).join('')
+      : `<tr><td colspan="${ctrl.opts.cols || 8}" style="text-align:center;color:#6a7a9e;">该分类下暂无数据</td></tr>`
+    const pagerHtml = list.length > ctrl.pageSize ? `
+      <div class="pager">
+        <button class="pager-btn" ${ctrl.state.page<=1?'disabled':''} onclick="setPagedMarket('${id}', null, ${ctrl.state.page-1})">◀ 上一页</button>
+        <span style="color:#6a7a9e;font-size:13px;">第 ${ctrl.state.page} / ${totalPages} 页 · 共 ${list.length} 条</span>
+        <button class="pager-btn" ${ctrl.state.page>=totalPages?'disabled':''} onclick="setPagedMarket('${id}', null, ${ctrl.state.page+1})">下一页 ▶</button>
+      </div>` : ''
+    ctrl.el.innerHTML = `
+      ${ctrl.opts.topHtml || ''}
+      <div class="market-tabs">${tabHtml}</div>
+      <div style="overflow-x:auto;">
+        <table>
+          ${ctrl.opts.head || ''}
+          <tbody>${rowHtml}</tbody>
+        </table>
+      </div>
+      ${pagerHtml}
+    `
+  }
+  ctrl.el = document.getElementById(id)
+  if (ctrl.el) {
+    ctrl.el.style.display = 'block'
+    ctrl.render()
+  }
+  PAGERS[id] = ctrl
+  return ctrl
+}
+
+function setPagedMarket(id, market, page) {
+  const c = PAGERS[id]
+  if (!c) return
+  if (market) c.state.market = market
+  if (page !== undefined && page >= 1) c.state.page = page
+  c.render()
+}
+
+// ============ 全市场扫描 ============
+async function scanMarket() {
+  const msgEl = document.getElementById('scanMsg')
+  const resultEl = document.getElementById('scanResult')
+  const limit = getLimit('scanLimit')
+  showLoading(msgEl)
+  resultEl.style.display = 'block'
+  resultEl.innerHTML = '<span class="loading"></span>正在获取全市场真实行情...'
+  try {
+    const res = await fetch(`${API}/rank?type=changePercent&order=desc&limit=${limit}`)
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    const stocks = Array.isArray(data) ? data : (data.results || [])
+
+    if (stocks.length === 0) {
+      resultEl.innerHTML = '<div class="error-msg">未获取到行情数据，请确认数据服务可访问外网。</div>'
+      showMsg(msgEl, '⚠️ 未获取到数据', 'error')
+      return
+    }
+
+    createPagedMarketTable('scanResult', stocks, {
+      topHtml: `<div style="margin-bottom:10px;"><span class="tag tag-info">涨幅前${stocks.length}</span></div>`,
+      head: `<tr><th>排名</th><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>PE</th><th>操作</th></tr>`,
+      cols: 8,
+      row: (s, rank) => {
+        const market = getMarketFromCode(s.code || '')
+        const code = s.code || 'N/A'
+        const name = s.name || '未知'
+        const price = s.price
+        const changePercent = s.changePercent
+        const pe = s.pe
+        return `
+        <tr>
+          <td>${rank}</td>
+          <td><span style="color:#6a7a9e;">${market}</span></td>
+          <td><span style="color:var(--cyan);font-weight:600;">${code}</span></td>
+          <td>${name}</td>
+          <td>${formatNumber(price, 2)}</td>
+          <td style="color:${changePercent>=0?'#ff4646':'#00c864'}">${changePercent>=0?'+':''}${formatNumber(changePercent, 2)}%</td>
+          <td>${formatNumber(pe, 2)}</td>
+          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="document.getElementById('stockCode').value='${code}';analyzeStock()">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
+        </tr>`
+      }
+    })
+    showMsg(msgEl, `✅ 扫描完成（${stocks.length} 条）`, 'success')
+  } catch (e) {
+    resultEl.innerHTML = `<div class="error-msg">行情获取失败，请检查网络后重试（${e.message}）</div>`
+    showMsg(msgEl, `❌ 行情获取失败（${e.message}）`, 'error')
+  }
+}
+
+// ============ 排行 ============
+async function loadRank(type, order) {
+  const msgEl = document.getElementById('scanMsg')
+  const resultEl = document.getElementById('scanResult')
+  const limit = getLimit('scanLimit')
+  showLoading(msgEl)
+  resultEl.style.display = 'block'
+  resultEl.innerHTML = '<span class="loading"></span>正在获取真实行情...'
+  try {
+    const res = await fetch(`${API}/rank?type=${type}&order=${order}&limit=${limit}`)
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    const label = type === 'changePercent' ? (order==='desc'?'涨幅':'跌幅') : type==='turnover'?'换手率':'排行'
+    const stocks = Array.isArray(data) ? data : (data.results || [])
+
+    if (stocks.length === 0) {
+      resultEl.innerHTML = '<div class="error-msg">未获取到行情数据，请确认数据服务可访问外网。</div>'
+      showMsg(msgEl, `⚠️ ${label}排行无数据`, 'error')
+      return
+    }
+
+    const isPct = type === 'changePercent'
+    createPagedMarketTable('scanResult', stocks, {
+      topHtml: `<div style="margin-bottom:10px;"><span class="tag tag-info">${label}排行 TOP${stocks.length}</span></div>`,
+      head: `<tr><th>排名</th><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>${label}</th><th>操作</th></tr>`,
+      cols: 7,
+      row: (s, rank) => {
+        const market = getMarketFromCode(s.code || '')
+        const code = s.code || 'N/A'
+        const name = s.name || '未知'
+        const price = s.price
+        const displayValue = isPct ? s.changePercent : s.turnover
+        const color = isPct ? (displayValue>=0?'#ff4646':'#00c864') : '#00d4ff'
+        return `
+        <tr>
+          <td>${rank}</td>
+          <td><span style="color:#6a7a9e;">${market}</span></td>
+          <td><span style="color:var(--cyan);font-weight:600;">${code}</span></td>
+          <td>${name}</td>
+          <td>${formatNumber(price, 2)}</td>
+          <td style="color:${color}">${displayValue>=0?'+':''}${formatNumber(displayValue, 2)}%</td>
+          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="document.getElementById('stockCode').value='${code}';analyzeStock()">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
+        </tr>`
+      }
+    })
+    showMsg(msgEl, `✅ ${label}排行加载完成`, 'success')
+  } catch (e) {
+    resultEl.innerHTML = `<div class="error-msg">行情获取失败，请检查网络后重试（${e.message}）</div>`
+    showMsg(msgEl, `❌ 行情获取失败（${e.message}）`, 'error')
+  }
+}
+
+// ============ 条件筛选 ============
+function addScreenerRow(btn) {
+  const container = document.getElementById('screenerConditions')
+  const row = btn.parentElement.cloneNode(true)
+  row.querySelector('button').textContent = '−'
+  row.querySelector('button').onclick = function() { this.parentElement.remove() }
+  container.appendChild(row)
+}
+
+function updateScreenerField(select) {
+  // 字段变化时可动态调整后续选项
+}
+
+function presetScreener(type) {
+  const container = document.getElementById('screenerConditions')
+  container.innerHTML = ''
+  const presets = {
+    dividend: [{f:'pe',o:'lt',v:'15'},{f:'changePercent',o:'gt',v:'0'}],
+    growth: [{f:'changePercent',o:'gt',v:'2'},{f:'turnover',o:'gt',v:'1'}],
+    cashflow: [{f:'pe',o:'lt',v:'25'},{f:'pb',o:'lt',v:'3'}]
+  }
+  const items = presets[type] || []
+  const fieldNames = {pe:'市盈率(PE)',pb:'市净率(PB)',changePercent:'涨跌幅',turnover:'换手率',price:'股价'}
+  items.forEach(item => {
+    const div = document.createElement('div')
+    div.className = 'screener-row'
+    div.innerHTML = `
+      <select><option value="${item.f}">${fieldNames[item.f]||item.f}</option><option value="pe">市盈率(PE)</option><option value="pb">市净率(PB)</option><option value="changePercent">涨跌幅</option><option value="turnover">换手率</option></select>
+      <select><option value="${item.o}">${item.o==='lt'?'<':item.o==='gt'?'>':'='}</option><option value="lt">&lt;</option><option value="gt">&gt;</option><option value="eq">=</option></select>
+      <input type="text" placeholder="数值" value="${item.v}">
+      <button class="secondary" onclick="this.parentElement.remove()">−</button>
+    `
+    container.appendChild(div)
+  })
+}
+
+async function runScreener() {
+  const msgEl = document.getElementById('screenerMsg')
+  const resultEl = document.getElementById('screenerResult')
+  const limit = getLimit('screenerLimit')
+  showLoading(msgEl)
+  resultEl.style.display = 'block'
+  resultEl.innerHTML = '<span class="loading"></span>正在筛选全市场真实数据...'
+
+  try {
+    // 收集筛选条件
+    const conditions = []
+    const rows = document.querySelectorAll('#screenerConditions .screener-row')
+    rows.forEach(row => {
+      const selects = row.querySelectorAll('select')
+      const input = row.querySelector('input')
+      if (selects.length >= 2 && input) {
+        const field = selects[0].value
+        const operator = selects[1].value
+        const value = parseFloat(input.value)
+        if (!isNaN(value)) {
+          conditions.push({ field, operator, value })
+        }
+      }
+    })
+
+    if (conditions.length === 0) {
+      resultEl.innerHTML = '<div style="color:var(--sub);">请输入筛选条件</div>'
+      showMsg(msgEl, '请输入筛选条件', 'error')
+      return
+    }
+
+    // 调用筛选API
+    const res = await fetch(`${API}/screener`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conditions, limit })
+    })
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+
+    const stocks = Array.isArray(data) ? data : (data.results || [])
+    const total = (data && data.total != null) ? data.total : stocks.length
+
+    if (stocks.length === 0) {
+      resultEl.innerHTML = '<div style="color:#6a7a9e;">当前条件下无匹配标的。</div>'
+      showMsg(msgEl, '✅ 筛选完成，无匹配标的', 'success')
+      return
+    }
+
+    createPagedMarketTable('screenerResult', stocks, {
+      topHtml: `
+        <div style="margin-bottom:10px;">
+          <span class="tag tag-info">筛选结果 (共 ${total} 只，显示前 ${stocks.length} 只)</span>
+          <span style="margin-left:10px;color:#6a7a9e;font-size:12px;">筛选条件: ${conditions.map(c => `${c.field} ${c.operator} ${c.value}`).join('; ')}</span>
+        </div>`,
+      head: `<tr><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>PE</th><th>PB</th><th>操作</th></tr>`,
+      cols: 8,
+      row: (s) => {
+        const market = getMarketFromCode(s.code || '')
+        const code = s.code || 'N/A'
+        const name = s.name || '未知'
+        const price = s.price
+        const changePercent = s.changePercent
+        const pe = s.pe
+        const pb = s.pb
+        return `
+        <tr>
+          <td><span style="color:#6a7a9e;">${market}</span></td>
+          <td><span style="color:var(--cyan);font-weight:600;">${code}</span></td>
+          <td>${name}</td>
+          <td>${formatNumber(price, 2)}</td>
+          <td style="color:${changePercent>=0?'#ff4646':'#00c864'}">${changePercent>=0?'+':''}${formatNumber(changePercent, 2)}%</td>
+          <td>${formatNumber(pe, 2)}</td>
+          <td>${formatNumber(pb, 2)}</td>
+          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="document.getElementById('stockCode').value='${code}';analyzeStock()">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
+        </tr>`
+      }
+    })
+    showMsg(msgEl, `✅ 筛选完成，找到 ${total} 只股票`, 'success')
+  } catch (e) {
+    resultEl.innerHTML = `<div class="error-msg">筛选失败，请检查网络后重试（${e.message}）</div>`
+    showMsg(msgEl, `❌ 筛选失败（${e.message}）`, 'error')
+  }
+}
+
+// ============ 自选股 ============
+function renderWatchlist(list) {
+  const resultEl = document.getElementById('watchlistResult')
+  resultEl.style.display = 'block'
+  // 按添加时间倒序（新添加的排在最前）
+  list = [].concat(list).sort((a, b) => {
+    const ta = a.addedAt ? new Date(a.addedAt).getTime() : 0
+    const tb = b.addedAt ? new Date(b.addedAt).getTime() : 0
+    return tb - ta
+  })
+  if (!list.length) {
+    resultEl.innerHTML = '<div style="color:#6a7a9e;">自选列表为空，请先添加股票</div>'
+    return
+  }
+  resultEl.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+      ${list.map(item => `
+        <div class="stock-item" style="margin-bottom:0;">
+          <div style="min-width:0;flex:1;">
+            <div style="margin-bottom:3px;font-size:12px;color:#6a7a9e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${getStockDisplay(item.code, item.name)}</div>
+            <div style="display:flex;align-items:center;">
+              <span style="font-size:17px;font-weight:600;">${item.price != null ? formatNumber(item.price, 2) : 'N/A'}</span>
+              ${item.changePercent !== undefined && item.changePercent !== null ? `<span style="margin-left:8px;color:${item.changePercent>=0?'#ff4646':'#00c864'}">${item.changePercent>=0?'+':''}${formatNumber(item.changePercent, 2)}%</span>` : ''}
+            </div>
+            ${item.addedAt ? `<div style="font-size:10px;color:#6a7a9e;">添加于: ${new Date(item.addedAt).toLocaleString('zh-CN')}</div>` : ''}
+          </div>
+          <div style="display:flex;gap:4px;">
+            <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="document.getElementById('stockCode').value='${String(item.code).replace(/^(sh|sz|bj)/, '')}';analyzeStock()">分析</button>
+            <button class="danger" style="padding:3px 8px;font-size:11px;" onclick="removeFromWatchlist('${item.code}')">删</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `
+}
+
+async function loadWatchlist() {
+  if (!watchlist.length) { renderWatchlist([]); updateFavButton(); return }
+  const resultEl = document.getElementById('watchlistResult')
+  resultEl.style.display = 'block'
+  resultEl.innerHTML = '<span class="loading"></span>加载自选股...'
+  try {
+    const codes = watchlist.map(item => item.code).filter(Boolean)
+    if (codes.length > 0) {
+      const res = await fetch(`${API}/quote/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codes })
+      })
+      const data = await res.json()
+      const arr = Array.isArray(data) ? data : (data.results || [])
+      const updated = watchlist.map(item => {
+        const realtime = arr.find(s => s.code === item.code || s.code === String(item.code).replace(/^(sh|sz|bj)/, ''))
+        if (realtime) {
+          return {
+            ...item,
+            price: realtime.price,
+            changePercent: realtime.changePercent,
+            name: realtime.name || item.name,
+            updatedAt: new Date().toISOString()
+          }
+        }
+        return item
+      })
+      localStorage.setItem('watchlist', JSON.stringify(updated))
+      watchlist = updated
+      renderWatchlist(updated)
+    } else {
+      renderWatchlist(watchlist)
+    }
+  } catch (e) {
+    renderWatchlist(watchlist)
+  }
+  updateFavButton()
+}
+
+function removeFromWatchlist(code) {
+  const bare = String(code).replace(/^(sh|sz|bj)/, '')
+  watchlist = watchlist.filter(item => String(item.code).replace(/^(sh|sz|bj)/, '') !== bare)
+  localStorage.setItem('watchlist', JSON.stringify(watchlist))
+  loadWatchlist()
+  updateFavButton()
+}
+
+function clearWatchlist() {
+  if (confirm('确定清空自选列表？')) {
+    watchlist = []
+    localStorage.removeItem('watchlist')
+    document.getElementById('watchlistResult').style.display = 'none'
+    showMsg(document.getElementById('scanMsg'), '自选列表已清空', 'success')
+  }
+}
+
+// ============ 回车快捷键 ============
+document.getElementById('stockCode').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') analyzeStock()
+})
+
+// 页面加载时自动加载自选
+loadWatchlist()
+</script>
+</body>
+</html>
