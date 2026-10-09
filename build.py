@@ -2,7 +2,7 @@
 import re, json
 
 API = "http://localhost:7373"
-OUT = "A股分析工具_实时版.html"
+OUT = "A股分析工具.html"
 
 APP_JS = r"""
 /* ================= 实时数据层 ================= */
