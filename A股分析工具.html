@@ -188,7 +188,12 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
 
 <script>
 // ============ 配置 ============
-const API = 'http://localhost:7373/api'
+// const API = 'http://localhost:7373/api'
+
+const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+  ? 'http://localhost:7373/api'
+  : 'https://a-stock-api.zhao1055.workers.dev/api'
+
 let watchlist = []
 let lastAnalyzedCode = null
 
