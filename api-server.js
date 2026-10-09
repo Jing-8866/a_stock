@@ -34,7 +34,7 @@ app.use(express.static(path.join(__dirname)))
 
 // 根路径自动跳转到主工具页面
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'A股分析工具.html'))
+  res.sendFile(path.join(__dirname, 'index.html'))
 })
 
 // ============ 工具函数 ============
@@ -859,7 +859,7 @@ app.listen(PORT, () => {
   console.log('║     A股数据桥接服务 v2.0                      ║')
   console.log('╠═══════════════════════════════════════════╣')
   console.log(`║  服务地址: http://localhost:${PORT}              ║`)
-  console.log('║  分析工具: http://localhost:' + PORT + '/A股分析工具.html ║')
+  console.log('║  分析工具: http://localhost:' + PORT + '/index.html ║')
   console.log('║  API文档:  http://localhost:' + PORT + '/api/health              ║')
   console.log('╚═══════════════════════════════════════════╝')
 })
