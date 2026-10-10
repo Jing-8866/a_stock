@@ -451,14 +451,15 @@ app.get('/api/quote/:code', async (req, res) => {
       price: parseFloat(fields[3]) || 0,
       yesterdayClose: parseFloat(fields[4]) || 0,
       open: parseFloat(fields[5]) || 0,
-      volume: parseFloat(fields[6]) || 0,
+      volume: parseFloat(fields[36]) || 0,
+      amount: parseFloat(fields[37]) || 0,
       bidPrice: parseFloat(fields[7]) || 0,
       askPrice: parseFloat(fields[8]) || 0,
       high: parseFloat(fields[33]) || 0,
       low: parseFloat(fields[34]) || 0,
       change: parseFloat(fields[31]) || 0,
       changePercent: parseFloat(fields[32]) || 0,
-      turnover: parseFloat(fields[37]) || 0,
+      turnover: parseFloat(fields[38]) || 0,
       pe: parseFloat(fields[39]) || 0,
       pb: parseFloat(fields[46]) || 0,
       marketCap: parseFloat(fields[44]) || 0,
@@ -497,7 +498,7 @@ app.post('/api/quote/batch', async (req, res) => {
         pb: parseFloat(fields[46]) || 0,
         high: parseFloat(fields[33]) || 0,
         low: parseFloat(fields[34]) || 0,
-        volume: parseFloat(fields[6]) || 0
+        volume: parseFloat(fields[36]) || 0
       }
     }).filter(Boolean)
     res.json(results)

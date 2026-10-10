@@ -41,6 +41,7 @@ tr:hover td { background: rgba(0,212,255,0.03); }
 .screener-row select, .screener-row input { flex: 1; min-width: 100px; }
 .stock-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 6px; background: #0a0e27; margin-bottom: 4px; border: 1px solid #1e2d5a; flex-wrap: nowrap; gap: 8px; min-height: 40px; flex: 1 1 auto; min-width: 220px; max-width: 100%; }
 .stock-item:hover { border-color: #00d4ff; }
+.stock-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 8px; }
 .stock-item > div:first-child { flex: 1 1 auto; min-width: 0; }
 .stock-item > div:last-child { flex: 0 0 auto; display: flex; gap: 4px; }
 .error-msg { color: #ff4646; font-size: 12px; margin-top: 8px; }
@@ -99,7 +100,7 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
 <div class="container">
 
   <!-- 单股分析 -->
-  <div class="card">
+  <div class="card" id="analyzeCard">
     <div class="card-title">🔍 单股分析</div>
     <div class="input-group">
       <div class="input-wrap" style="flex:1; min-width:250px;">
@@ -293,6 +294,15 @@ function clearStockInput() {
 }
 
 // ============ 单股分析（支持代码或名称搜索） ============
+// 从列表快速分析：填充输入框→分析→滚动到单股分析区域
+function quickAnalyze(code) {
+  const full = normalizeCode(code)
+  document.getElementById('stockCode').value = String(full).replace(/^(sh|sz|bj)/, '')
+  analyzeStock()
+  const card = document.getElementById('analyzeCard')
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function analyzeStock() {
   const raw = document.getElementById('stockCode').value.trim()
   const msgEl = document.getElementById('analyzeMsg')
@@ -356,25 +366,6 @@ async function runAnalyze(code) {
     
     let verdict = score >= 70 ? '<span class="tag tag-buy">✅ 建议买入</span>' : score >= 50 ? '<span class="tag tag-wait">⏳ 观望为主</span>' : '<span class="tag tag-sell">❌ 不建议</span>'
     
-    // ===== 估值股价（基于 PE 15~30 倍、PB 2~5 倍合理区间推算） =====
-    let valHtml = '<div style="color:#6a7a9e;">缺少 PE/PB 数据，无法估值</div>'
-    if (data.pe > 0 && data.pb > 0 && data.price > 0) {
-      const eps = data.price / data.pe
-      const bps = data.price / data.pb
-      const peLow = eps * 15, peHigh = eps * 30
-      const pbLow = bps * 2, pbHigh = bps * 5
-      const lo = Math.min(peLow, pbLow), hi = Math.max(peHigh, pbHigh)
-      const pos = data.price < lo ? '低估' : (data.price > hi ? '高估' : '合理')
-      const posColor = pos === '低估' ? '#00c864' : (pos === '高估' ? '#ff4646' : '#ffb400')
-      valHtml = `
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;">
-          <div><span style="color:#6a7a9e;">PE估值价(15~30倍)</span><br><span style="font-weight:600;">${formatNumber(peLow,2)} ~ ${formatNumber(peHigh,2)} 元</span></div>
-          <div><span style="color:#6a7a9e;">PB估值价(2~5倍)</span><br><span style="font-weight:600;">${formatNumber(pbLow,2)} ~ ${formatNumber(pbHigh,2)} 元</span></div>
-          <div><span style="color:#6a7a9e;">当前股价</span><br><span style="font-weight:600;">${formatNumber(data.price,2)} 元</span></div>
-          <div><span style="color:#6a7a9e;">估值结论</span><br><span style="font-weight:600;color:${posColor};">${pos}</span></div>
-        </div>`
-    }
-    
     resultEl.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <h3 style="color:#00d4ff;margin:0;">${getStockDisplay(data.code, data.name)}</h3>
@@ -386,11 +377,11 @@ async function runAnalyze(code) {
         <div><span style="color:#6a7a9e;">开盘价</span><br><span style="font-size:18px;font-weight:600;">${data.open ? formatNumber(data.open, 2) : 'N/A'}</span></div>
         <div><span style="color:#6a7a9e;">最高价</span><br><span style="font-size:18px;font-weight:600;">${data.high ? formatNumber(data.high, 2) : 'N/A'}</span></div>
         <div><span style="color:#6a7a9e;">最低价</span><br><span style="font-size:18px;font-weight:600;">${data.low ? formatNumber(data.low, 2) : 'N/A'}</span></div>
-        <div><span style="color:#6a7a9e;">成交量</span><br><span style="font-size:18px;font-weight:600;">${data.volume ? formatNumber(data.volume, 0) : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">成交量</span><br><span style="font-size:18px;font-weight:600;">${fmtVolumeHands(data.volume)}</span></div>
         <div><span style="color:#6a7a9e;">PE</span><br><span style="font-size:20px;font-weight:600;">${data.pe ? formatNumber(data.pe, 2) : 'N/A'}</span></div>
         <div><span style="color:#6a7a9e;">PB</span><br><span style="font-size:20px;font-weight:600;">${data.pb ? formatNumber(data.pb, 2) : 'N/A'}</span></div>
         <div><span style="color:#6a7a9e;">换手率</span><br><span style="font-size:20px;font-weight:600;">${data.turnover ? formatNumber(data.turnover, 2)+'%' : 'N/A'}</span></div>
-        <div><span style="color:#6a7a9e;">成交额</span><br><span style="font-size:20px;font-weight:600;">${data.volume ? formatNumber(data.volume/10000, 2)+'万' : 'N/A'}</span></div>
+        <div><span style="color:#6a7a9e;">成交额</span><br><span style="font-size:20px;font-weight:600;">${fmtMoneyWan(data.amount)}</span></div>
       </div>
       <div style="margin:15px 0;">
         <span style="color:#6a7a9e;">综合评分：</span>
@@ -400,10 +391,6 @@ async function runAnalyze(code) {
         </div>
       </div>
       <div style="margin:10px 0;">${verdict}</div>
-      <div style="margin:15px 0;padding:12px;background:#111836;border-radius:8px;border:1px solid #1e2d5a;">
-        <div style="color:#6a7a9e;margin-bottom:8px;">💎 估值股价</div>
-        ${valHtml}
-      </div>
       <div style="margin-top:15px;padding:12px;background:#111836;border-radius:8px;border:1px solid #1e2d5a;">
         <div style="color:#6a7a9e;margin-bottom:8px;">💡 操作建议</div>
         ${score >= 70 ? '当前估值合理且走势偏强，可逢低分批建仓，建议仓位 20%-30%，止损设在前低下方 5%。' : score >= 50 ? '基本面尚可但趋势未明，建议观望为主，等待放量突破关键阻力位后再介入。' : '当前估值偏高或走势偏弱，不建议追高，可关注其他标的。'}
@@ -466,6 +453,18 @@ async function loadChart(period) {
 function fmtTimeLabel(t) {
   const s = String(t || '').replace(/[^0-9]/g, '').slice(-4)
   return s.length === 4 ? s.slice(0, 2) + ':' + s.slice(2) : String(t || '')
+}
+
+// 成交额（万元）→ 展示文本
+function fmtMoneyWan(wan) {
+  if (!wan || isNaN(wan)) return 'N/A'
+  return Math.abs(wan) >= 10000 ? formatNumber(wan / 10000, 2) + ' 亿' : formatNumber(wan, 2) + ' 万'
+}
+
+// 成交量（手）→ 展示文本
+function fmtVolumeHands(hands) {
+  if (!hands || isNaN(hands)) return 'N/A'
+  return Math.abs(hands) >= 10000 ? formatNumber(hands / 10000, 2) + ' 万手' : formatNumber(hands, 0) + ' 手'
 }
 
 function renderLineChart(container, pts, opts) {
@@ -769,7 +768,7 @@ async function scanMarket() {
           <td>${formatNumber(price, 2)}</td>
           <td style="color:${changePercent>=0?'#ff4646':'#00c864'}">${changePercent>=0?'+':''}${formatNumber(changePercent, 2)}%</td>
           <td>${formatNumber(pe, 2)}</td>
-          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="document.getElementById('stockCode').value='${code}';analyzeStock()">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
+          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAnalyze('${code}')">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
         </tr>`
       }
     })
@@ -821,7 +820,7 @@ async function loadRank(type, order) {
           <td>${name}</td>
           <td>${formatNumber(price, 2)}</td>
           <td style="color:${color}">${displayValue>=0?'+':''}${formatNumber(displayValue, 2)}%</td>
-          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="document.getElementById('stockCode').value='${code}';analyzeStock()">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
+          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAnalyze('${code}')">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
         </tr>`
       }
     })
@@ -942,7 +941,7 @@ async function runScreener() {
           <td style="color:${changePercent>=0?'#ff4646':'#00c864'}">${changePercent>=0?'+':''}${formatNumber(changePercent, 2)}%</td>
           <td>${formatNumber(pe, 2)}</td>
           <td>${formatNumber(pb, 2)}</td>
-          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="document.getElementById('stockCode').value='${code}';analyzeStock()">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
+          <td><button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAnalyze('${code}')">分析</button> <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="quickAddWatchlist('${code}')">加入自选</button></td>
         </tr>`
       }
     })
@@ -968,7 +967,7 @@ function renderWatchlist(list) {
     return
   }
   resultEl.innerHTML = `
-    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+    <div class="stock-grid">
       ${list.map(item => `
         <div class="stock-item" style="margin-bottom:0;">
           <div style="min-width:0;flex:1;">
@@ -980,7 +979,7 @@ function renderWatchlist(list) {
             ${item.addedAt ? `<div style="font-size:10px;color:#6a7a9e;">添加于: ${new Date(item.addedAt).toLocaleString('zh-CN')}</div>` : ''}
           </div>
           <div style="display:flex;gap:4px;">
-            <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="document.getElementById('stockCode').value='${String(item.code).replace(/^(sh|sz|bj)/, '')}';analyzeStock()">分析</button>
+            <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="quickAnalyze('${String(item.code).replace(/^(sh|sz|bj)/, '')}')">分析</button>
             <button class="danger" style="padding:3px 8px;font-size:11px;" onclick="removeFromWatchlist('${item.code}')">删</button>
           </div>
         </div>
