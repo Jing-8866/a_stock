@@ -457,6 +457,8 @@ app.get('/api/quote/:code', async (req, res) => {
       askPrice: parseFloat(fields[8]) || 0,
       high: parseFloat(fields[33]) || 0,
       low: parseFloat(fields[34]) || 0,
+      limitUp: parseFloat(fields[47]) || 0,
+      limitDown: parseFloat(fields[48]) || 0,
       change: parseFloat(fields[31]) || 0,
       changePercent: parseFloat(fields[32]) || 0,
       turnover: parseFloat(fields[38]) || 0,
@@ -492,6 +494,7 @@ app.post('/api/quote/batch', async (req, res) => {
         code: fields[2] || '',
         name: fixChineseEncoding(fields[1] || ''),
         price: parseFloat(fields[3]) || 0,
+        yesterdayClose: parseFloat(fields[4]) || 0,
         change: parseFloat(fields[31]) || 0,
         changePercent: parseFloat(fields[32]) || 0,
         pe: parseFloat(fields[39]) || 0,
@@ -819,7 +822,7 @@ app.get('/api/kline/:code', async (req, res) => {
       high: parseFloat(r[3]) || null,
       low: parseFloat(r[4]) || null,
       volume: parseFloat(r[5]) || null
-    })).filter(k => k.close !== null)
+    })).filter(k => k.close !== null && k.close > 0)
     res.json({ code: secid, period: pf, klines })
   } catch (e) {
     res.status(500).json({ error: e.message, points: [], klines: [] })
