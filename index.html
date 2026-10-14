@@ -14,8 +14,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft Ya
 .card { background: #111836; border-radius: 12px; padding: 15px; margin-bottom: 15px; border: 1px solid #1e2d5a; }
 .card-title { font-size: 14px; font-weight: 600; color: #00d4ff; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .input-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-input[type="text"], input[type="number"], select { background: #0a0e27; border: 1px solid #2a3a6a; border-radius: 6px; padding: 8px 12px; color: #e0e0e0; font-size: 13px; outline: none; transition: border 0.3s; min-height: 36px; }
-input[type="text"]:focus, input[type="number"]:focus, select:focus { border-color: #00d4ff; }
+input[type="text"], input[type="number"], input[type="datetime-local"], select { background: #0a0e27; border: 1px solid #2a3a6a; border-radius: 6px; padding: 8px 12px; color: #e0e0e0; font-size: 13px; outline: none; transition: border 0.3s; min-height: 36px; }
+input[type="text"]:focus, input[type="number"]:focus, input[type="datetime-local"]:focus, select:focus { border-color: #00d4ff; }
 button { background: linear-gradient(135deg, #00d4ff, #0099cc); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; transition: all 0.3s; font-weight: 500; min-height: 36px; white-space: nowrap; }
 button:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(0,212,255,0.3); }
 button:active { transform: translateY(0); }
@@ -71,7 +71,7 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
   .card { padding: 12px; margin-bottom: 12px; }
   .card-title { font-size: 13px; margin-bottom: 10px; gap: 5px; }
   .input-group { gap: 6px; }
-  input[type="text"], input[type="number"], select { padding: 6px 10px; font-size: 12px; min-height: 34px; }
+  input[type="text"], input[type="number"], input[type="datetime-local"], select { padding: 6px 10px; font-size: 12px; min-height: 34px; }
   button { padding: 6px 12px; font-size: 12px; min-height: 34px; }
   table { font-size: 11px; }
   th, td { padding: 5px 6px; }
@@ -139,19 +139,24 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
 
   <!-- 持仓管理 -->
   <div class="card" id="holdingsCard">
-    <div class="card-title">💼 持仓管理 <span style="font-size:12px;color:#6a7a9e;">输入买入股票、成本价、持仓数量，自动跟踪持仓与当日盈亏</span></div>
+    <div class="card-title">💼 持仓管理 <span style="font-size:12px;color:#6a7a9e;">按交易明细自动汇总持仓与盈亏</span></div>
     <div class="input-group">
       <div class="input-wrap" style="flex:1; min-width:180px;">
         <input type="text" id="holdStockInput" placeholder="股票代码或名称">
         <button type="button" class="clear-input" onclick="document.getElementById('holdStockInput').value=''" title="清空">✕</button>
       </div>
-      <input type="number" id="holdCostInput" placeholder="成本价" step="0.01" min="0" style="width:110px;">
+      <select id="holdTypeInput" style="width:88px;">
+        <option value="buy">买入</option>
+        <option value="sell">卖出</option>
+      </select>
+      <input type="datetime-local" id="holdTimeInput" step="1" style="width:200px;" title="交易时间">
+      <input type="number" id="holdCostInput" placeholder="交易股价" step="0.01" min="0" style="width:110px;">
       <input type="number" id="holdQtyInput" placeholder="数量(股)" step="1" min="1" style="width:110px;">
-      <button onclick="addHolding()">➕ 添加</button>
+      <button onclick="addTrade()">➕ 添加</button>
       <button class="secondary" onclick="loadHoldings()">🔄 刷新</button>
       <button class="danger" onclick="clearHoldInput()">🗑️ 清空</button>
     </div>
-    <div id="holdMsg"></div>
+    <div id="holdStockHint" style="font-size:13px;color:#6a7a9e;margin:6px 0 8px 2px;"></div>
     <div id="holdingsResult" class="result-area" style="display:none;"></div>
   </div>
 
@@ -214,7 +219,10 @@ const API = (location.hostname === 'localhost' || location.hostname === '127.0.0
   : 'https://a-stock-api.zhao1055.workers.dev/api'
 
 let watchlist = []
-let holdings = []
+let trades = []
+let expandedTradeCodes = []
+let lastQuoteMap = {}
+let showCleared = false
 let lastAnalyzedCode = null
 
 // 初始化时转换旧的字符串格式为对象格式
@@ -244,17 +252,40 @@ function initWatchlist() {
 }
 initWatchlist()
 
-// 持股列表初始化
-function initHoldings() {
-  const stored = localStorage.getItem('holdings')
+// 交易明细初始化（读取 trades，无则尝试迁移旧版 holdings → 一条买入流水）
+function initTrades() {
+  let stored = null
+  try { stored = localStorage.getItem('trades') } catch (e) { stored = null }
   if (stored) {
     try {
       const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed)) holdings = parsed
-    } catch (e) { holdings = [] }
+      if (Array.isArray(parsed)) { trades = parsed; return }
+    } catch (e) { /* 继续迁移 */ }
   }
+  migrateOldHoldings()
 }
-initHoldings()
+
+function migrateOldHoldings() {
+  let old = null
+  try { old = localStorage.getItem('holdings') } catch (e) { old = null }
+  if (!old) return
+  try {
+    const oldArr = JSON.parse(old)
+    if (Array.isArray(oldArr)) {
+      trades = oldArr.map(h => ({
+        id: genTradeId(),
+        code: normalizeCode(h.code),
+        name: h.name || '',
+        type: 'buy',
+        price: h.cost || 0,
+        qty: h.qty || 0,
+        time: h.addedAt || new Date().toISOString()
+      })).filter(t => t.price > 0 && t.qty > 0)
+      saveTrades()
+    }
+  } catch (e) { /* 忽略旧数据 */ }
+}
+initTrades()
 
 // ============ 工具函数 ============
 function showLoading(el) { el.innerHTML = '<span class="loading"></span>分析中...' }
@@ -1018,7 +1049,7 @@ function renderWatchlist(list) {
           </div>
           <div style="display:flex;gap:4px;">
             <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="quickAnalyze('${String(item.code).replace(/^(sh|sz|bj)/, '')}')">分析</button>
-            <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="fillHoldingFromWatchlist('${item.code}','${(item.name||'').replace(/'/g,'')}')">持仓</button>
+            <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="fillHoldingFromWatchlist('${item.code}','${(item.name||'').replace(/'/g,'')}','${item.price || ''}')">持仓</button>
             <button class="danger" style="padding:3px 8px;font-size:11px;" onclick="removeFromWatchlist('${item.code}')">删</button>
           </div>
         </div>
@@ -1084,28 +1115,51 @@ function clearWatchlist() {
   }
 }
 
-// ============ 持股 ============
-// 添加持股记录：解析代码/名称→校验→获取行情→保存
-async function addHolding() {
-  const raw = document.getElementById('holdStockInput').value.trim()
-  const cost = parseFloat(document.getElementById('holdCostInput').value)
-  const qty = parseInt(document.getElementById('holdQtyInput').value)
-  const msgEl = document.getElementById('holdMsg')
+// ============ 持仓管理（基于交易明细汇总） ============
+// 交易流水：{ id, code, name, type:'buy'|'sell', price, qty, time }
+function genTradeId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
 
-  if (!raw) { showMsg(msgEl, '请输入股票代码或名称', 'error'); return }
-  if (isNaN(cost) || cost <= 0) { showMsg(msgEl, '请输入有效的成本价', 'error'); return }
-  if (isNaN(qty) || qty <= 0) { showMsg(msgEl, '请输入有效的持仓数量', 'error'); return }
+// datetime-local 输入框默认值：当前系统时间
+function holdTimeNow() {
+  const now = new Date()
+  const p = n => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())}T${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`
+}
+
+function saveTrades() {
+  localStorage.setItem('trades', JSON.stringify(trades))
+}
+
+function fmtTradeTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+// 添加交易流水（永远新增，不修改历史流水）
+async function addTrade() {
+  const raw = document.getElementById('holdStockInput').value.trim()
+  const type = document.getElementById('holdTypeInput').value
+  const price = parseFloat(document.getElementById('holdCostInput').value)
+  const qty = parseInt(document.getElementById('holdQtyInput').value)
+
+  if (!raw) { alert('请输入股票代码或名称'); return }
+  if (isNaN(price) || price <= 0) { alert('请输入有效的交易股价'); return }
+  if (isNaN(qty) || qty <= 0) { alert('请输入有效的交易数量'); return }
 
   let code
   if (/^(sh|sz|bj)?\d{6}$/i.test(raw.replace(/\s/g, ''))) {
     code = normalizeCode(raw)
   } else {
-    showLoading(msgEl)
     try {
       const res = await fetch(`${API}/search?q=${encodeURIComponent(raw)}`)
       const data = await res.json()
       const list = Array.isArray(data) ? data : (data.results || [])
-      if (!list.length) { showMsg(msgEl, '⚠️ 未找到匹配的股票，请改用代码', 'error'); return }
+      if (!list.length) { alert('未找到匹配的股票，请改用代码'); return }
       if (list.length === 1) code = list[0].code
       else {
         const resultEl = document.getElementById('holdingsResult')
@@ -1116,115 +1170,216 @@ async function addHolding() {
             <div><b>${s.name}</b> <span style="color:#6a7a9e;">${bareCode(s.code)} · ${getMarketFromCode(s.code)}</span></div>
             <button class="secondary" style="padding:4px 12px;font-size:12px;" onclick="pickHoldingStock('${bareCode(s.code)}','${(s.name||'').replace(/'/g,'')}')">选择</button>
           </div>`).join('')}`
-        showMsg(msgEl, `匹配到 ${list.length} 只，请选择`, 'success')
         return
       }
-    } catch (e) { showMsg(msgEl, `❌ 搜索失败（${e.message}）`, 'error'); return }
+    } catch (e) { alert(`搜索失败（${e.message}）`); return }
   }
 
-  const bare = String(code).replace(/^(sh|sz|bj)/, '')
-  const existIdx = holdings.findIndex(h => String(h.code).replace(/^(sh|sz|bj)/, '') === bare)
+  // 卖出校验：卖出数量不能超过当前持仓
+  if (type === 'sell') {
+    const b = bareCode(code)
+    let holding = 0
+    trades.forEach(t => {
+      if (bareCode(t.code) !== b) return
+      holding += t.type === 'sell' ? -t.qty : t.qty
+    })
+    if (qty > holding) { alert(`卖出数量(${qty})超过当前持仓(${holding} 股)`); return }
+  }
 
-  showLoading(msgEl)
   try {
     const res = await fetch(`${API}/quote/${code}`)
     const data = await res.json()
     if (data.error) throw new Error(data.error)
-    if (existIdx >= 0) {
-      holdings[existIdx].cost = cost
-      holdings[existIdx].qty = qty
-      holdings[existIdx].price = data.price
-      holdings[existIdx].yesterdayClose = data.yesterdayClose
-      holdings[existIdx].name = data.name || holdings[existIdx].name
-      holdings[existIdx].addedAt = new Date().toISOString()
-    } else {
-      holdings.push({
-        code: normalizeCode(data.code),
-        name: data.name,
-        cost: cost,
-        qty: qty,
-        price: data.price,
-        yesterdayClose: data.yesterdayClose,
-        addedAt: new Date().toISOString()
-      })
-    }
-    localStorage.setItem('holdings', JSON.stringify(holdings))
+    const timeInput = document.getElementById('holdTimeInput').value
+    const tradeTime = timeInput ? new Date(timeInput).toISOString() : new Date().toISOString()
+    trades.push({
+      id: genTradeId(),
+      code: normalizeCode(data.code),
+      name: data.name || '',
+      type: type,
+      price: price,
+      qty: qty,
+      time: tradeTime
+    })
+    saveTrades()
     document.getElementById('holdStockInput').value = ''
     document.getElementById('holdCostInput').value = ''
     document.getElementById('holdQtyInput').value = ''
+    document.getElementById('holdTimeInput').value = holdTimeNow()
+    document.getElementById('holdStockHint').textContent = ''
     loadHoldings()
-    showMsg(msgEl, existIdx >= 0 ? `✅ 已更新持股: ${data.name}（成本 ${formatNumber(cost, 2)} × ${qty} 股）` : `✅ 已添加持股: ${data.name}（成本 ${formatNumber(cost, 2)} × ${qty} 股）`, 'success')
   } catch (e) {
-    showMsg(msgEl, `❌ 添加失败（${e.message}）`, 'error')
+    alert(`添加失败（${e.message}）`)
   }
 }
 
-// 搜索多匹配时选择某只股票后，回填代码并继续添加
+// 搜索多匹配时选择某只股票后回填代码
 function pickHoldingStock(code, name) {
   document.getElementById('holdStockInput').value = code
-  document.getElementById('holdMsg').innerHTML = `已选择: ${name} (${code})，请确认成本价与数量后点击"添加"`
+  document.getElementById('holdStockHint').textContent = name ? `${name}(${code})` : ''
   document.getElementById('holdCostInput').focus()
 }
 
-// 渲染持股列表（含汇总）
-function renderHoldings(list) {
+// 是否为今天（自然日）
+function isToday(iso) {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return false
+  const now = new Date()
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+}
+
+// 按交易时间先进先出顺序计算加权平均成本
+// 买入：成本价 =（原持仓总成本 + 本次买入金额）÷（原持仓股数 + 本次买入股数）
+// 卖出：仅减少持仓股数，成本保持不变
+function calcCost(trades) {
+  let qty = 0, cost = 0
+  trades.slice().sort((a, b) => new Date(a.time) - new Date(b.time)).forEach(t => {
+    if (t.type === 'sell') {
+      qty -= t.qty
+    } else if (qty > 0) {
+      cost = (qty * cost + t.qty * t.price) / (qty + t.qty)
+      qty += t.qty
+    } else {
+      cost = t.price
+      qty = t.qty
+    }
+  })
+  return cost
+}
+
+// 渲染持仓汇总表（由交易明细动态汇总）及可展开的明细表
+function renderHoldings(quoteMap = {}) {
   const resultEl = document.getElementById('holdingsResult')
   resultEl.style.display = 'block'
-  list = [].concat(list).sort((a, b) => {
-    const ta = a.addedAt ? new Date(a.addedAt).getTime() : 0
-    const tb = b.addedAt ? new Date(b.addedAt).getTime() : 0
-    return tb - ta
+
+  const groups = {}
+  trades.forEach(t => {
+    const bare = bareCode(t.code)
+    if (!groups[bare]) groups[bare] = { code: t.code, name: t.name, buyQty: 0, buyAmt: 0, sellQty: 0, sellAmt: 0, todayBuyQty: 0, todayBuyAmt: 0, todaySellQty: 0, todaySellAmt: 0, trades: [], latestTime: '' }
+    const g = groups[bare]
+    if (!g.latestTime || new Date(t.time) > new Date(g.latestTime)) g.latestTime = t.time
+    if (t.type === 'sell') { g.sellQty += t.qty; g.sellAmt += t.qty * t.price }
+    else { g.buyQty += t.qty; g.buyAmt += t.qty * t.price }
+    if (isToday(t.time)) {
+      if (t.type === 'sell') { g.todaySellQty += t.qty; g.todaySellAmt += t.qty * t.price }
+      else { g.todayBuyQty += t.qty; g.todayBuyAmt += t.qty * t.price }
+    }
+    g.trades.push(t)
   })
+
+  const list = Object.values(groups)
+    .map(g => {
+      const q = quoteMap[bareCode(g.code)] || {}
+      const price = q.price || 0
+      const yClose = q.yesterdayClose || 0
+      const cost = calcCost(g.trades)
+      const qty = g.buyQty - g.sellQty
+      // 持仓市值 = 现价 × 持仓数量
+      const floating = price * qty
+      // 买卖差额 = Σ卖出金额 - Σ买入金额
+      const realized = g.sellAmt - g.buyAmt
+      // 总持仓收益 = 现价×持仓数量 + Σ卖出金额 - Σ买入金额
+      const totalProfit = floating + realized
+      // 当日盈亏 = 持仓相对昨收变化 + 当日卖出收益 - 当日买入消耗（相对昨收）
+      const dayProfit = (price - yClose) * qty
+        + (g.todaySellAmt - yClose * g.todaySellQty)
+        - (g.todayBuyAmt - yClose * g.todayBuyQty)
+      return {
+        code: g.code,
+        name: q.name || g.name || '',
+        cost: cost,
+        qty: qty,
+        price: price,
+        buyAmt: g.buyAmt,
+        realized: realized,
+        floating: floating,
+        totalProfit: totalProfit,
+        dayProfit: dayProfit,
+        trades: g.trades,
+        latestTime: g.latestTime || ''
+      }
+    })
+    .sort((a, b) => new Date(b.latestTime) - new Date(a.latestTime))
+    .filter(s => showCleared || s.qty > 0)
+
   if (!list.length) {
-    resultEl.innerHTML = '<div style="color:#6a7a9e;">持股列表为空，请添加持仓记录</div>'
+    resultEl.innerHTML = '<div style="color:#6a7a9e;">暂无持仓，请先添加交易明细</div>'
     return
   }
 
-  let totalCost = 0, totalValue = 0, totalHoldProfit = 0, totalDayProfit = 0
-  list.forEach(h => {
-    const price = h.price || 0
-    totalCost += h.cost * h.qty
-    totalValue += price * h.qty
-    totalHoldProfit += (price - h.cost) * h.qty
-    totalDayProfit += (price - (h.yesterdayClose || 0)) * h.qty
+  let totalCost = 0, totalValue = 0, totalProfit = 0, totalDayProfit = 0
+  list.forEach(s => {
+    totalCost += s.buyAmt
+    totalValue += s.price * s.qty
+    totalProfit += s.totalProfit
+    totalDayProfit += s.dayProfit
   })
-  const holdPct = totalCost > 0 ? totalHoldProfit / totalCost * 100 : 0
+  const holdPct = totalCost > 0 ? totalProfit / totalCost * 100 : 0
 
   resultEl.innerHTML = `
-    <div style="margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;">
+    <div style="margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <span class="tag tag-info">总市值 ${formatNumber(totalValue, 2)}</span>
-      <span class="tag tag-info">总成本 ${formatNumber(totalCost, 2)}</span>
-      <span class="tag ${totalHoldProfit>=0?'tag-sell':'tag-buy'}">持仓盈亏 ${totalHoldProfit>=0?'+':''}${formatNumber(totalHoldProfit, 2)} (${holdPct>=0?'+':''}${formatNumber(holdPct, 2)}%)</span>
+      <span class="tag tag-info">总投入 ${formatNumber(totalCost, 2)}</span>
+      <span class="tag ${totalProfit>=0?'tag-sell':'tag-buy'}">持仓收益 ${totalProfit>=0?'+':''}${formatNumber(totalProfit, 2)} (${holdPct>=0?'+':''}${formatNumber(holdPct, 2)}%)</span>
       <span class="tag ${totalDayProfit>=0?'tag-sell':'tag-buy'}">当日盈亏 ${totalDayProfit>=0?'+':''}${formatNumber(totalDayProfit, 2)}</span>
+      <label style="font-size:13px;color:#6a7a9e;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="showClearedChk" ${showCleared?'checked':''} onchange="showCleared=this.checked;renderHoldings(lastQuoteMap)">展示已清仓</label>
     </div>
     <div style="overflow-x:auto;">
       <table>
-        <thead><tr><th>股票</th><th>成本价</th><th>数量</th><th>现价</th><th>持仓盈亏</th><th>当日盈亏</th><th>操作</th></tr></thead>
+        <thead><tr><th>股票</th><th>成本价</th><th>数量</th><th>现价</th><th>市值</th><th>持仓收益</th><th>当日盈亏</th><th>操作</th></tr></thead>
         <tbody>
-        ${list.map(h => {
-          const price = h.price || 0
-          const yClose = h.yesterdayClose || 0
-          const holdProfit = (price - h.cost) * h.qty
-          const holdPct = h.cost > 0 ? (price - h.cost) / h.cost * 100 : 0
-          const dayProfit = (price - yClose) * h.qty
-          const dayPct = yClose > 0 ? (price - yClose) / yClose * 100 : 0
+        ${list.map(s => {
+          const bare = bareCode(s.code)
+          const price = s.price || 0
+          const yClose = s.yesterdayClose || 0
           const hasQuote = price > 0
-          const holdColor = holdProfit >= 0 ? '#ff4646' : '#00c864'
-          const dayColor = dayProfit >= 0 ? '#ff4646' : '#00c864'
+          const holdColor = s.totalProfit >= 0 ? '#ff4646' : '#00c864'
+          const dayColor = s.dayProfit >= 0 ? '#ff4646' : '#00c864'
+          const expanded = expandedTradeCodes.indexOf(bare) >= 0
+          const detailRow = expanded ? `
+          <tr>
+            <td colspan="8" style="padding:10px 12px;background:#0a0e27;">
+              <div style="font-size:12px;color:#6a7a9e;margin-bottom:6px;">📋 ${s.name || ''} (${bare}) 交易明细（${s.trades.length} 条）</div>
+              <div style="overflow-x:auto;">
+              <table style="font-size:12px;border:1px solid #1e2d5a;">
+                <thead><tr><th>时间</th><th>交易方式</th><th>交易股价</th><th>交易数量</th><th>交易金额</th><th>操作</th></tr></thead>
+                <tbody>
+                  ${s.trades.slice().sort((a,b)=>new Date(b.time)-new Date(a.time)).map(t => `
+                  <tr>
+                    <td><span style="color:#6a7a9e;">${fmtTradeTime(t.time)}</span></td>
+                    <td style="color:${t.type==='buy'?'#ff4646':'#00c864'};">${t.type==='buy'?'买入':'卖出'}</td>
+                    <td>${formatNumber(t.price, 3)}</td>
+                    <td>${t.qty}</td>
+                    <td>${formatNumber(t.price * t.qty, 2)}</td>
+                    <td><button class="danger" style="padding:2px 8px;font-size:11px;" onclick="removeTrade('${t.id}')">删</button></td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+              </div>
+            </td>
+          </tr>` : ''
+          const holdCell = hasQuote
+            ? `${s.totalProfit>=0?'+':''}${formatNumber(s.totalProfit, 2)}`
+            : 'N/A'
+          const dayCell = hasQuote
+            ? `${s.dayProfit>=0?'+':''}${formatNumber(s.dayProfit, 2)}`
+            : 'N/A'
           return `
           <tr>
-            <td><b>${h.name || ''}</b><br><span style="color:#6a7a9e;font-size:11px;">${bareCode(h.code)}</span></td>
-            <td>${formatNumber(h.cost, 3)}</td>
-            <td>${h.qty}</td>
+            <td><b>${s.name || ''}</b><br><span style="color:#6a7a9e;font-size:11px;">${bare}</span></td>
+            <td>${formatNumber(s.cost, 3)}</td>
+            <td>${s.qty}</td>
             <td>${hasQuote ? formatNumber(price, 2) : 'N/A'}</td>
-            <td style="color:${holdColor};">${hasQuote ? `${holdProfit>=0?'+':''}${formatNumber(holdProfit, 2)}<br><span style="font-size:11px;">(${holdPct>=0?'+':''}${formatNumber(holdPct, 2)}%)</span>` : 'N/A'}</td>
-            <td style="color:${dayColor};">${hasQuote && yClose > 0 ? `${dayProfit>=0?'+':''}${formatNumber(dayProfit, 2)}<br><span style="font-size:11px;">(${dayPct>=0?'+':''}${formatNumber(dayPct, 2)}%)</span>` : 'N/A'}</td>
+            <td>${hasQuote ? formatNumber(s.floating, 2) : 'N/A'}</td>
+            <td style="color:${holdColor};">${holdCell}</td>
+            <td style="color:${dayColor};">${dayCell}</td>
             <td>
-              <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="quickAnalyze('${String(h.code).replace(/^(sh|sz|bj)/, '')}')">分析</button>
-              <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="editHolding('${h.code}')">改</button>
-              <button class="danger" style="padding:3px 8px;font-size:11px;" onclick="removeHolding('${h.code}')">删</button>
+              <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="quickAnalyze('${bare}')">分析</button>
+              <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="fillTradeFromHolding('${bare}')">交易</button>
+              <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="toggleTrades('${bare}')">${expanded?'收起':'明细'}</button>
+              <button class="danger" style="padding:3px 8px;font-size:11px;" onclick="removeHolding('${bare}')">删</button>
             </td>
-          </tr>`
+          </tr>${detailRow}`
         }).join('')}
         </tbody>
       </table>
@@ -1232,15 +1387,40 @@ function renderHoldings(list) {
   `
 }
 
-// 刷新持股行情（批量获取现价与昨收）
+function toggleTrades(code) {
+  const bare = bareCode(code)
+  const idx = expandedTradeCodes.indexOf(bare)
+  if (idx >= 0) expandedTradeCodes = []
+  else expandedTradeCodes = [bare]
+  renderHoldings(lastQuoteMap)
+}
+
+// 汇总表"交易"按钮：填入代码，股价默认现价，数量置空，交易方式默认卖出
+function fillTradeFromHolding(code) {
+  const bare = bareCode(code)
+  const q = lastQuoteMap[bare] || {}
+  document.getElementById('holdStockInput').value = bare
+  document.getElementById('holdTypeInput').value = 'sell'
+  document.getElementById('holdCostInput').value = q.price > 0 ? q.price : ''
+  document.getElementById('holdQtyInput').value = ''
+  document.getElementById('holdTimeInput').value = holdTimeNow()
+  const t = trades.find(t => bareCode(t.code) === bare)
+  document.getElementById('holdStockHint').textContent = (t && t.name) ? `${t.name}(${bare})` : ''
+  const card = document.getElementById('holdingsCard')
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  document.getElementById('holdQtyInput').focus()
+}
+
+// 刷新行情（从交易明细提取股票，批量获取现价与昨收）
 async function loadHoldings() {
-  if (!holdings.length) { renderHoldings([]); return }
   const resultEl = document.getElementById('holdingsResult')
+  if (!trades.length) { renderHoldings(); return }
   resultEl.style.display = 'block'
-  resultEl.innerHTML = '<span class="loading"></span>加载持股行情...'
-  try {
-    const codes = holdings.map(h => normalizeCode(h.code)).filter(Boolean)
-    if (codes.length > 0) {
+  resultEl.innerHTML = '<span class="loading"></span>加载行情...'
+  const codes = [...new Set(trades.map(t => normalizeCode(t.code)))].filter(Boolean)
+  let quoteMap = {}
+  if (codes.length > 0) {
+    try {
       const res = await fetch(`${API}/quote/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1248,58 +1428,50 @@ async function loadHoldings() {
       })
       const data = await res.json()
       const arr = Array.isArray(data) ? data : (data.results || [])
-      const updated = holdings.map(h => {
-        const nc = normalizeCode(h.code)
-        const bare = String(h.code).replace(/^(sh|sz|bj)/, '')
-        const rt = arr.find(s => s.code === bare || s.code === h.code || s.code === nc)
-        if (rt) return { ...h, code: nc, price: rt.price, yesterdayClose: rt.yesterdayClose, name: rt.name || h.name }
-        return { ...h, code: nc }
+      arr.forEach(rt => {
+        const a = rt.price || 0
+        const yc = rt.yesterdayClose > 0 ? rt.yesterdayClose : ((a > 0 && rt.change) ? a - rt.change : 0)
+        quoteMap[bareCode(rt.code)] = { price: a, yesterdayClose: yc, name: rt.name }
       })
-      localStorage.setItem('holdings', JSON.stringify(updated))
-      holdings = updated
-      renderHoldings(updated)
-    } else {
-      renderHoldings(holdings)
-    }
-  } catch (e) {
-    renderHoldings(holdings)
+    } catch (e) { /* 无行情时按 N/A 展示 */ }
   }
+  lastQuoteMap = quoteMap
+  renderHoldings(quoteMap)
 }
 
-function removeHolding(code) {
-  const bare = String(code).replace(/^(sh|sz|bj)/, '')
-  holdings = holdings.filter(h => String(h.code).replace(/^(sh|sz|bj)/, '') !== bare)
-  localStorage.setItem('holdings', JSON.stringify(holdings))
+// 删除单条交易明细
+function removeTrade(id) {
+  trades = trades.filter(t => t.id !== id)
+  saveTrades()
   loadHoldings()
 }
 
-// 修改持股：将记录回填到输入框，调整后点击"添加"即更新
-function editHolding(code) {
-  const bare = String(code).replace(/^(sh|sz|bj)/, '')
-  const h = holdings.find(item => String(item.code).replace(/^(sh|sz|bj)/, '') === bare)
-  if (!h) return
-  document.getElementById('holdStockInput').value = bareCode(h.code)
-  document.getElementById('holdCostInput').value = h.cost
-  document.getElementById('holdQtyInput').value = h.qty
-  showMsg(document.getElementById('holdMsg'), `正在修改: ${h.name || ''} (${bareCode(h.code)})，调整后点击"添加"将更新`, 'success')
-  document.getElementById('holdCostInput').focus()
+// 删除股票（连同其全部交易明细）
+function removeHolding(code) {
+  const bare = bareCode(code)
+  const count = trades.filter(t => bareCode(t.code) === bare).length
+  if (!confirm(`确定删除 ${bare} 的 ${count} 条交易明细？`)) return
+  trades = trades.filter(t => bareCode(t.code) !== bare)
+  saveTrades()
+  loadHoldings()
 }
 
 function clearHoldInput() {
   document.getElementById('holdStockInput').value = ''
   document.getElementById('holdCostInput').value = ''
   document.getElementById('holdQtyInput').value = ''
-  document.getElementById('holdMsg').innerHTML = ''
+  document.getElementById('holdTimeInput').value = holdTimeNow()
+  document.getElementById('holdStockHint').textContent = ''
 }
 
-// 从自选股填入持股输入框，并滚动到持股区域
-function fillHoldingFromWatchlist(code, name) {
+// 从自选股填入持仓输入框（股票代码 + 买入方式 + 现价），并滚动到持仓区域
+function fillHoldingFromWatchlist(code, name, price) {
   document.getElementById('holdStockInput').value = bareCode(code)
-  const bare = bareCode(code)
-  const exist = holdings.find(h => bareCode(h.code) === bare)
-  document.getElementById('holdCostInput').value = exist ? exist.cost : ''
-  document.getElementById('holdQtyInput').value = exist ? exist.qty : ''
-  showMsg(document.getElementById('holdMsg'), `已填入 ${name || ''} (${bareCode(code)})，请输入成本价与持仓数量后点击"添加"`, 'success')
+  document.getElementById('holdTypeInput').value = 'buy'
+  document.getElementById('holdCostInput').value = price > 0 ? price : ''
+  document.getElementById('holdQtyInput').value = ''
+  document.getElementById('holdTimeInput').value = holdTimeNow()
+  document.getElementById('holdStockHint').textContent = name ? `${name}(${bareCode(code)})` : ''
   const card = document.getElementById('holdingsCard')
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
   document.getElementById('holdCostInput').focus()
@@ -1313,6 +1485,7 @@ document.getElementById('stockCode').addEventListener('keypress', function(e) {
 // 页面加载时自动加载自选与持股
 loadWatchlist()
 loadHoldings()
+document.getElementById('holdTimeInput').value = holdTimeNow()
 </script>
 </body>
 </html>
