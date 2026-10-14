@@ -99,8 +99,16 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
 
 <div class="container">
 
+  <div class="market-tabs">
+    <button class="market-tab" id="tabBtnAnalyze" onclick="switchMainTab('analyze')">🔍 单股分析</button>
+    <button class="market-tab active" id="tabBtnWatchlist" onclick="switchMainTab('watchlist')">⭐ 自选股</button>
+    <button class="market-tab" id="tabBtnHoldings" onclick="switchMainTab('holdings')">💼 持仓管理</button>
+    <button class="market-tab" id="tabBtnScan" onclick="switchMainTab('scan')">🌐 全市场扫描</button>
+    <button class="market-tab" id="tabBtnScreener" onclick="switchMainTab('screener')">🎯 条件筛选</button>
+  </div>
+
   <!-- 单股分析 -->
-  <div class="card" id="analyzeCard">
+  <div class="card" id="analyzeCard" style="display:none;">
     <div class="card-title">🔍 单股分析</div>
     <div class="input-group">
       <div class="input-wrap" style="flex:1; min-width:250px;">
@@ -128,7 +136,7 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
   </div>
 
   <!-- 自选股 -->
-  <div class="card">
+  <div class="card" id="watchlistCard">
     <div class="card-title">⭐ 自选股</div>
     <div class="input-group">
       <button onclick="loadWatchlist()">📋 刷新</button>
@@ -138,7 +146,7 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
   </div>
 
   <!-- 持仓管理 -->
-  <div class="card" id="holdingsCard">
+  <div class="card" id="holdingsCard" style="display:none;">
     <div class="card-title">💼 持仓管理 <span style="font-size:12px;color:#6a7a9e;">按交易明细自动汇总持仓与盈亏</span></div>
     <div class="input-group">
       <div class="input-wrap" style="flex:1; min-width:180px;">
@@ -161,7 +169,7 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
   </div>
 
   <!-- 全市场扫描 -->
-  <div class="card">
+  <div class="card" id="scanCard" style="display:none;">
     <div class="card-title">🌐 全市场扫描</div>
     <div class="input-group">
       <button onclick="scanMarket()">🔄 执行扫描</button>
@@ -176,7 +184,7 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
   </div>
 
   <!-- 条件筛选 -->
-  <div class="card">
+  <div class="card" id="screenerCard" style="display:none;">
     <div class="card-title">🎯 条件筛选</div>
     <div id="screenerConditions">
       <div class="screener-row">
@@ -365,6 +373,7 @@ function clearStockInput() {
 function quickAnalyze(code) {
   const full = normalizeCode(code)
   document.getElementById('stockCode').value = String(full).replace(/^(sh|sz|bj)/, '')
+  switchMainTab('analyze')
   analyzeStock()
   const card = document.getElementById('analyzeCard')
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -436,7 +445,10 @@ async function runAnalyze(code) {
     resultEl.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
         <h3 style="color:#00d4ff;margin:0;">${getStockDisplay(data.code, data.name)}</h3>
-        <button class="secondary" id="favBtn" onclick="toggleFavorite()">☆ 加入自选</button>
+        <div style="display:flex;gap:8px;">
+          <button class="secondary" onclick="fillHoldingFromWatchlist('${data.code}','${(data.name||'').replace(/'/g,'')}','${data.price || ''}')">交易</button>
+          <button class="secondary" id="favBtn" onclick="toggleFavorite()">☆ 加入自选</button>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:15px;">
         <div><span style="color:#6a7a9e;">最新价</span><br><span style="font-size:20px;font-weight:600;">${formatNumber(data.price, 2)}</span></div>
@@ -1107,7 +1119,8 @@ function removeFromWatchlist(code) {
 }
 
 function clearWatchlist() {
-  if (confirm('确定清空自选列表？')) {
+  if (!watchlist.length) { showMsg(document.getElementById('scanMsg'), '自选列表为空', 'info'); return }
+  if (confirm(`确定清空自选列表（共 ${watchlist.length} 只股票）？`)) {
     watchlist = []
     localStorage.removeItem('watchlist')
     document.getElementById('watchlistResult').style.display = 'none'
@@ -1202,6 +1215,7 @@ async function addTrade() {
       time: tradeTime
     })
     saveTrades()
+    addCodeToWatchlist(normalizeCode(data.code), { silent: true })
     document.getElementById('holdStockInput').value = ''
     document.getElementById('holdCostInput').value = ''
     document.getElementById('holdQtyInput').value = ''
@@ -1387,6 +1401,24 @@ function renderHoldings(quoteMap = {}) {
   `
 }
 
+function switchMainTab(tab) {
+  const tabs = ['analyze', 'watchlist', 'holdings', 'scan', 'screener']
+  const cardIds = { analyze: 'analyzeCard', watchlist: 'watchlistCard', holdings: 'holdingsCard', scan: 'scanCard', screener: 'screenerCard' }
+  tabs.forEach(t => {
+    const card = document.getElementById(cardIds[t])
+    if (card) card.style.display = (t === tab) ? '' : 'none'
+    const btn = document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1))
+    if (btn) btn.classList.toggle('active', t === tab)
+  })
+  const chartCard = document.getElementById('chartCard')
+  if (chartCard) {
+    if (tab === 'analyze' && lastAnalyzedCode) chartCard.style.display = 'block'
+    else chartCard.style.display = 'none'
+  }
+  if (tab === 'watchlist') loadWatchlist()
+  if (tab === 'holdings') loadHoldings()
+}
+
 function toggleTrades(code) {
   const bare = bareCode(code)
   const idx = expandedTradeCodes.indexOf(bare)
@@ -1406,6 +1438,7 @@ function fillTradeFromHolding(code) {
   document.getElementById('holdTimeInput').value = holdTimeNow()
   const t = trades.find(t => bareCode(t.code) === bare)
   document.getElementById('holdStockHint').textContent = (t && t.name) ? `${t.name}(${bare})` : ''
+  switchMainTab('holdings')
   const card = document.getElementById('holdingsCard')
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
   document.getElementById('holdQtyInput').focus()
@@ -1472,6 +1505,7 @@ function fillHoldingFromWatchlist(code, name, price) {
   document.getElementById('holdQtyInput').value = ''
   document.getElementById('holdTimeInput').value = holdTimeNow()
   document.getElementById('holdStockHint').textContent = name ? `${name}(${bareCode(code)})` : ''
+  switchMainTab('holdings')
   const card = document.getElementById('holdingsCard')
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
   document.getElementById('holdCostInput').focus()
