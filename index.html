@@ -1305,6 +1305,7 @@ function renderHoldings(quoteMap = {}) {
         qty: qty,
         price: price,
         buyAmt: g.buyAmt,
+        sellAmt: g.sellAmt,
         realized: realized,
         floating: floating,
         totalProfit: totalProfit,
@@ -1321,21 +1322,24 @@ function renderHoldings(quoteMap = {}) {
     return
   }
 
-  let totalCost = 0, totalValue = 0, totalProfit = 0, totalDayProfit = 0
+  let totalCost = 0, totalValue = 0, totalProfit = 0, totalDayProfit = 0, totalSellAmt = 0
   list.forEach(s => {
     totalCost += s.buyAmt
     totalValue += s.price * s.qty
     totalProfit += s.totalProfit
     totalDayProfit += s.dayProfit
+    totalSellAmt += s.sellAmt
   })
   const holdPct = totalCost > 0 ? totalProfit / totalCost * 100 : 0
+  const dayPct = totalCost > 0 ? totalDayProfit / totalCost * 100 : 0
 
   resultEl.innerHTML = `
     <div style="margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <span class="tag tag-info">总市值 ${formatNumber(totalValue, 2)}</span>
       <span class="tag tag-info">总投入 ${formatNumber(totalCost, 2)}</span>
+      <span class="tag tag-info">总卖出 ${formatNumber(totalSellAmt, 2)}</span>
       <span class="tag ${totalProfit>=0?'tag-sell':'tag-buy'}">持仓收益 ${totalProfit>=0?'+':''}${formatNumber(totalProfit, 2)} (${holdPct>=0?'+':''}${formatNumber(holdPct, 2)}%)</span>
-      <span class="tag ${totalDayProfit>=0?'tag-sell':'tag-buy'}">当日盈亏 ${totalDayProfit>=0?'+':''}${formatNumber(totalDayProfit, 2)}</span>
+      <span class="tag ${totalDayProfit>=0?'tag-sell':'tag-buy'}">当日盈亏 ${totalDayProfit>=0?'+':''}${formatNumber(totalDayProfit, 2)} (${dayPct>=0?'+':''}${formatNumber(dayPct, 2)}%)</span>
       <label style="font-size:13px;color:#6a7a9e;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="showClearedChk" ${showCleared?'checked':''} onchange="showCleared=this.checked;renderHoldings(lastQuoteMap)">展示已清仓</label>
     </div>
     <div style="overflow-x:auto;">
