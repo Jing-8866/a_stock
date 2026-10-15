@@ -61,18 +61,12 @@
 - **多数据源**：东方财富/新浪/腾讯
 - **最佳结果**：智能排序返回
 
-### 报告导出（可选）
-- Word/PDF 报告生成
-- 包含完整的分析和评分
-
 ## 🏗️ 项目结构
 
 ```
 A股选股分析工具/
 ├── index.html                # 前端主程序（浏览器打开）
 ├── api-server.js             # 智能数据桥接服务（Node.js / Express）
-├── gen_docx.py               # Word 报告生成脚本（可选）
-├── build.py                  # 构建/打包脚本（可选）
 ├── package.json              # 依赖声明
 ├── README.md                 # 项目说明
 └── 使用说明.md                # 快速启动指南
@@ -202,13 +196,6 @@ node api-server.js
 - 东方财富/新浪/腾讯多数据源
 - 智能匹配最佳结果
 
-### 报告导出（可选）
-如需生成 Word/PDF 报告：
-```bash
-pip install python-docx requests
-python gen_docx.py sh600519
-```
-
 ## 📝 版本历史
 
 | 版本 | 日期 | 说明 |
@@ -256,7 +243,6 @@ python gen_docx.py sh600519
 | 后端 | Node.js + Express + CORS |
 | 数据源 | 多数据源智能降级：东方财富/新浪/腾讯 |
 | 编码修复 | 内置GBK编码修复逻辑 |
-| 报告 | Python + python-docx（可选） |
 | 存储 | 浏览器 localStorage（自选股 `watchlist` / 交易明细 `trades`） |
 | 数据范围 | 沪深 A 股全市场（5000+ 股票） |
 
