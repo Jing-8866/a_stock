@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>localStorage 备份工具</title>
+<style>
+  body{font-family:-apple-system,"Microsoft YaHei";max-width:680px;margin:40px auto;padding:0 16px;color:#333}
+  input{padding:6px 10px;width:320px;font-size:14px}
+  button{font-size:14px;padding:6px 14px;margin:6px 4px 6px 0;cursor:pointer}
+  pre{background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:12px;max-height:260px;overflow:auto;font-size:13px}
+  .warn{color:#c0392b;font-size:13px}.ok{color:#27ae60;font-size:13px}
+</style>
+</head>
+<body>
+
+<h2>localStorage 备份 / 恢复</h2>
+
+<p>
+  目标域：
+  <input id="origin" placeholder="留空=当前页面域，例 http://localhost:7373/">
+  <span id="status" class="ok"></span>
+</p>
+
+<p>
+  <button onclick="doExport()">⬇️ 导出</button>
+  <button onclick="document.getElementById('file').click()">⬆️ 导入</button>
+  <button onclick="refresh()">🔄 刷新预览</button>
+  <input type="file" id="file" accept=".json" style="display:none">
+</p>
+
+<h3>当前可操作 origin：<code id="cur"></code></h3>
+<pre id="view"></pre>
+
+<div class="warn" id="hint"></div>
+
+<script>
+const curEl = document.getElementById('cur');
+const hintEl = document.getElementById('hint');
+const statusEl = document.getElementById('status');
+
+function normalize(u){ return u.trim().replace(/\/+$/,'') || location.origin; }
+
+function effectiveOrigin(){
+  const v = document.getElementById('origin').value.trim();
+  return v ? v.replace(/\/+$/,'') : location.origin;
+}
+
+function checkSame(){
+  const eff = effectiveOrigin();
+  curEl.textContent = eff;
+  if (eff !== location.origin) {
+    hintEl.innerHTML =
+      '⚠️ 输入域 <b>' + eff + '</b> 与当前页面域 <b>' + location.origin +
+      '</b> <u>不同源</u>。<br>浏览器安全限制：<b>无法跨域读写 localStorage</b>。' +
+      '<br>✅ 正确做法：把这个工具页部署到 <b>' + eff + '</b> 下打开，或用该域的 DevTools 执行。';
+    statusEl.className='warn'; statusEl.textContent='不同源';
+    return false;
+  }
+  hintEl.textContent = '';
+  statusEl.className='ok'; statusEl.textContent='同源 ✔';
+  return true;
+}
+
+function refresh(){
+  if(!checkSame()){ document.getElementById('view').textContent=''; return; }
+  const d={};
+  for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);d[k]=localStorage.getItem(k)}
+  document.getElementById('view').textContent = JSON.stringify(d,null,2);
+}
+
+function doExport(){
+  if(!checkSame()) return;
+  const d={};
+  for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);d[k]=localStorage.getItem(k)}
+  const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  const tag = btoa(location.origin).slice(0,8);
+  a.download='ls-'+tag+'-'+Date.now()+'.json';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('file').addEventListener('change',e=>{
+  if(!checkSame()) return;
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    try{
+      const obj=JSON.parse(ev.target.result);
+      Object.entries(obj).forEach(([k,v])=>localStorage.setItem(k,typeof v==='string'?v:JSON.stringify(v)));
+      alert('导入完成'); refresh();
+    }catch(err){alert('导入失败：'+err.message)}
+  };
+  r.readAsText(f,'utf-8');
+});
+
+document.getElementById('origin').addEventListener('input', checkSame);
+checkSame(); refresh();
+</script>
+</body>
+</html>
