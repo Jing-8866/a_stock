@@ -7,6 +7,8 @@
   body{font-family:-apple-system,"Microsoft YaHei";max-width:680px;margin:40px auto;padding:0 16px;color:#333}
   input{padding:6px 10px;width:320px;font-size:14px}
   button{font-size:14px;padding:6px 14px;margin:6px 4px 6px 0;cursor:pointer}
+  .danger{background:#e74c3c;color:#fff;border:none;border-radius:4px}
+  .danger:hover{background:#c0392b}
   pre{background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:12px;max-height:260px;overflow:auto;font-size:13px}
   .warn{color:#c0392b;font-size:13px}.ok{color:#27ae60;font-size:13px}
 </style>
@@ -24,6 +26,7 @@
 <p>
   <button onclick="doExport()">⬇️ 导出</button>
   <button onclick="document.getElementById('file').click()">⬆️ 导入</button>
+  <button onclick="doClear()">🗑️ 清空</button>
   <button onclick="refresh()">🔄 刷新预览</button>
   <input type="file" id="file" accept=".json" style="display:none">
 </p>
@@ -37,8 +40,6 @@
 const curEl = document.getElementById('cur');
 const hintEl = document.getElementById('hint');
 const statusEl = document.getElementById('status');
-
-function normalize(u){ return u.trim().replace(/\/+$/,'') || location.origin; }
 
 function effectiveOrigin(){
   const v = document.getElementById('origin').value.trim();
@@ -78,6 +79,35 @@ function doExport(){
   a.download='ls-'+tag+'-'+Date.now()+'.json';
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
 }
+
+/* ===== 新增：清空目标域 localStorage ===== */
+function doClear(){
+  if(!checkSame()) return;
+
+  // 先统计条目，做二次确认
+  const keys = [];
+  for(let i=0;i<localStorage.length;i++) keys.push(localStorage.key(i));
+
+  if(keys.length === 0){
+    alert('当前域的 localStorage 已经是空的。');
+    return;
+  }
+
+  // 二次确认，防止误删
+  const msg = '确定要清空【' + location.origin + '】下的全部 localStorage 吗？\n\n'
+            + '共 ' + keys.length + ' 条数据将被删除：\n'
+            + keys.slice(0, 10).join('、')
+            + (keys.length > 10 ? '\n……（还有 ' + (keys.length-10) + ' 条）' : '');
+  if(!confirm(msg)) return;
+
+  // 再次确认（双重保险）
+  if(!confirm('此操作不可撤销！确认继续清空？')) return;
+
+  keys.forEach(k => localStorage.removeItem(k));
+  alert('已清空 ' + keys.length + ' 条数据。');
+  refresh();
+}
+/* ====================================== */
 
 document.getElementById('file').addEventListener('change',e=>{
   if(!checkSame()) return;
