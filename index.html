@@ -1376,11 +1376,13 @@ function renderHoldings(quoteMap = {}) {
               </div>
             </td>
           </tr>` : ''
+          const holdPct = s.buyAmt > 0 ? s.totalProfit / s.buyAmt * 100 : 0
+          const dayPct = s.buyAmt > 0 ? s.dayProfit / s.buyAmt * 100 : 0
           const holdCell = hasQuote
-            ? `${s.totalProfit>=0?'+':''}${formatNumber(s.totalProfit, 2)}`
+            ? `${s.totalProfit>=0?'+':''}${formatNumber(s.totalProfit, 2)}<br><span style="font-size:11px;">${holdPct>=0?'+':''}${formatNumber(holdPct, 2)}%</span>`
             : 'N/A'
           const dayCell = hasQuote
-            ? `${s.dayProfit>=0?'+':''}${formatNumber(s.dayProfit, 2)}`
+            ? `${s.dayProfit>=0?'+':''}${formatNumber(s.dayProfit, 2)}<br><span style="font-size:11px;">${dayPct>=0?'+':''}${formatNumber(dayPct, 2)}%</span>`
             : 'N/A'
           return `
           <tr>
