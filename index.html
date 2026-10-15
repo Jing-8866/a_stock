@@ -522,7 +522,7 @@ async function loadChart(period) {
         if (active && active.dataset.period === 'minute' && currentChartCode) loadChart('minute')
       }, 30000)
     } else if (data.klines) {
-      renderLineChart(container, data.klines.map(k => ({ x: k.date, y: k.close })), {})
+      renderLineChart(container, data.klines.map(k => ({ x: k.date, y: k.close, close: k.close, open: k.open, high: k.high, low: k.low })), { period: apiPeriod })
     } else {
       msgEl.innerHTML = '<div class="error-msg">未获取到走势数据</div>'
     }
@@ -562,6 +562,10 @@ function renderLineChart(container, pts, opts) {
   const pt = isMobile ? 14 : 18
   const pb = isMobile ? 28 : 30
   let lo = Math.min.apply(null, values), hi = Math.max.apply(null, values)
+  pts.forEach(p => {
+    if (typeof p.high === 'number' && isFinite(p.high) && p.high > 0) hi = Math.max(hi, p.high)
+    if (typeof p.low === 'number' && isFinite(p.low) && p.low > 0) lo = Math.min(lo, p.low)
+  })
   const span = (hi - lo) || Math.abs(hi) * 0.02 || 1
   lo -= span * 0.08; hi += span * 0.08
   const iw = W - pl - pr, ih = H - pt - pb
@@ -631,6 +635,80 @@ function renderLineChart(container, pts, opts) {
     return best
   }
 
+  // 当前股票在持仓列表中的交易记录 → 标注到对应图点位
+  const chartTrades = currentChartCode ? trades.filter(t => bareCode(t.code) === bareCode(currentChartCode)) : []
+  const tradeAtPoint = {}
+  if (chartTrades.length) {
+    chartTrades.forEach(t => {
+      const dt = new Date(t.time)
+      if (isNaN(dt.getTime())) return
+      let idx = -1
+      if (timeAxis) {
+        // 分时图仅展示当日交易，历史交易不应标注到今日分时坐标
+        if (!isToday(t.time)) return
+        const hhmm = String(dt.getHours()).padStart(2, '0') + String(dt.getMinutes()).padStart(2, '0')
+        const ti = timeToIdx(hhmm)
+        let best = -1, dist = Infinity
+        for (let k = 0; k < n; k++) {
+          const d2 = Math.abs(xs[k] - ti)
+          if (d2 < dist) { dist = d2; best = k }
+        }
+        if (dist <= 3) idx = best
+      } else {
+        const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+        // 找到第一个点位日期不早于交易日期：日K精确匹配，周/月K落入对应周期点位
+        let target = -1
+        for (let k = 0; k < n; k++) {
+          if (String(pts[k].x) >= dateStr) { target = k; break }
+        }
+        if (target >= 0) {
+          const pDate = String(pts[target].x)
+          const prevDate = target > 0 ? String(pts[target - 1].x) : ''
+          // 交易日期必须落在该点位覆盖周期 (prevDate, pDate] 内；首点位无法确定下界时仅接受等日期
+          if (dateStr <= pDate && (!prevDate ? dateStr === pDate : dateStr > prevDate)) idx = target
+        }
+      }
+      if (idx >= 0) {
+        if (!tradeAtPoint[idx]) tradeAtPoint[idx] = []
+        tradeAtPoint[idx].push(t)
+      }
+    })
+  }
+  const tradeMarkers = Object.keys(tradeAtPoint).map(idxStr => {
+    const idx = +idxStr
+    const tList = tradeAtPoint[idx]
+    const hasBuy = tList.some(t => t.type !== 'sell')
+    const hasSell = tList.some(t => t.type === 'sell')
+    const tag = hasBuy && hasSell ? 'T' : (hasBuy ? 'B' : 'S')
+    const mColor = hasBuy && hasSell ? '#facc15' : (hasBuy ? '#ff4646' : '#1e90ff')
+    const px = x(idx)
+    const p = pts[idx]
+    const my = y(p.y)
+    // 采样圆点附近折线，字母优先放在无趋势线遮挡的上方或下方（允许间隙、距离不固定）
+    const lys = []
+    const nbr = []
+    if (idx > 0) nbr.push(idx - 1)
+    nbr.push(idx)
+    if (idx < n - 1) nbr.push(idx + 1)
+    for (let k = 0; k < nbr.length - 1; k++) {
+      const a = nbr[k], b = nbr[k + 1]
+      const ax = x(a), bx = x(b)
+      const ay = y(pts[a].y), by = y(pts[b].y)
+      for (let s = 0; s <= 4; s++) {
+        const fx = ax + (bx - ax) * s / 4
+        if (fx >= px - 6 && fx <= px + 6) lys.push(ay + (by - ay) * s / 4)
+      }
+    }
+    const gap = 10
+    const hit = (lo2, hi2) => lys.some(v => v >= lo2 && v <= hi2)
+    const upBlocked = hit(my - gap - 8, my - gap)
+    const downBlocked = hit(my + gap - 2, my + gap + 6)
+    const up = !(upBlocked && !downBlocked)
+    const ty = up ? (my - gap) : (my + gap + 6)
+    return `<circle cx="${px.toFixed(1)}" cy="${my.toFixed(1)}" r="3" fill="${mColor}" stroke="#0a0e27" stroke-width="1"/>
+      <text x="${px.toFixed(1)}" y="${ty.toFixed(1)}" fill="${mColor}" font-size="${isMobile ? 7 : 8}" font-weight="700" text-anchor="middle">${tag}</text>`
+  }).join('')
+
   let prevLine = ''
   if (timeAxis && prevClose != null && prevClose >= lo && prevClose <= hi) {
     prevLine = `<line x1="${pl}" y1="${y(prevClose).toFixed(1)}" x2="${W - pr}" y2="${y(prevClose).toFixed(1)}" stroke="#8ea0c8" stroke-width="1" stroke-dasharray="4 3"/>`
@@ -641,6 +719,7 @@ function renderLineChart(container, pts, opts) {
       ${prevLine}
       <path d="${path}" fill="none" stroke="${lineColor}" stroke-width="${isMobile ? '1.5' : '1.8'}" stroke-linejoin="round" stroke-linecap="round"/>
       ${n > 1 ? `<circle cx="${x(n - 1).toFixed(1)}" cy="${y(lastVal).toFixed(1)}" r="3" fill="${lineColor}"/>` : ''}
+      ${tradeMarkers}
       ${tickDefs.map(t => `<text x="${t.px.toFixed(1)}" y="${H - 6}" fill="#6a7a9e" font-size="${isMobile ? '10' : '11'}" text-anchor="${t.anchor}">${t.label}</text>`).join('')}
       <g data-tip></g>
     </svg>`
@@ -657,14 +736,44 @@ function renderLineChart(container, pts, opts) {
     if (p.x < pl || p.x > W - pr || p.y < pt || p.y > H - pb) { tip.innerHTML = ''; return }
     const i = nearestIndex(p.x)
     const px = x(i), py = y(pts[i].y)
+    const nowDto = new Date()
+    const pd = n => String(n).padStart(2, '0')
+    const todayStr = `${nowDto.getFullYear()}-${pd(nowDto.getMonth()+1)}-${pd(nowDto.getDate())}`
+    const isDayK = timeAxis ? false : (!opts.period || opts.period === 'day')
     const fontSize = isMobile ? 10 : 12
     const strokeWidth = isMobile ? 2 : 3
     tip.innerHTML = `
       <line x1="${px.toFixed(1)}" y1="${pt}" x2="${px.toFixed(1)}" y2="${pt + ih}" stroke="#8ea0c8" stroke-width="1" stroke-dasharray="3 3"/>
       <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" fill="${lineColor}" stroke="#0a0e27" stroke-width="1.5"/>
       <g>
-        <text x="${pl + 4}" y="${pt - 4}" fill="#6a7a9e" font-size="${isMobile ? 10 : 11}" text-anchor="start">${xLabel(i)}</text>
-        <text x="${pl + 4}" y="${pt + 8}" fill="#e0e6ff" font-size="${isMobile ? 12 : 14}" text-anchor="start" font-weight="600">${formatNumber(pts[i].y, 2)} 元</text>
+        <text x="${pl + 4}" y="${pt - 4}" fill="#6a7a9e" font-size="${isMobile ? 10 : 11}" text-anchor="start">${timeAxis ? todayStr + ' ' : ''}${xLabel(i)}${timeAxis ? ` ${formatNumber(pts[i].y, 2)} 元` : `（${isDayK ? `开:${(typeof pts[i].open === 'number' && pts[i].open > 0) ? formatNumber(pts[i].open, 2) : 'N/A'} 收:${formatNumber(pts[i].y, 2)} ` : ''}高:${(typeof pts[i].high === 'number' && pts[i].high > 0) ? formatNumber(pts[i].high, 2) : 'N/A'} 低:${(typeof pts[i].low === 'number' && pts[i].low > 0) ? formatNumber(pts[i].low, 2) : 'N/A'}）`}</text>
+        ${(function() {
+          const tArr = tradeAtPoint[i] || []
+          if (!tArr.length) return ''
+          const buys = tArr.filter(t => t.type !== 'sell')
+          const sells = tArr.filter(t => t.type === 'sell')
+          const mk = (list, tag) => {
+            if (!list.length) return ''
+            const totQty = list.reduce((s, t) => s + t.qty, 0)
+            const totAmt = list.reduce((s, t) => s + t.qty * t.price, 0)
+            return `${tag} 均价${formatNumber(totQty > 0 ? totAmt / totQty : 0, 2)}*${totQty}股`
+          }
+          const fsz = isMobile ? 8 : 9
+          const bStr = mk(buys, 'B')
+          const sStr = mk(sells, 'S')
+          const parts = []
+          if (bStr) parts.push({ txt: bStr, color: '#ff4646' })
+          if (sStr) parts.push({ txt: sStr, color: '#1e90ff' })
+          if (!parts.length) return ''
+          let cxp = pl + 4
+          let html = ''
+          parts.forEach((part, k) => {
+            const sep = k < parts.length - 1 ? '; ' : ''
+            html += `<text x="${cxp.toFixed(1)}" y="${pt + 26}" fill="${part.color}" font-size="${fsz}" text-anchor="start">${part.txt}${sep}</text>`
+            cxp += part.txt.length * fsz * 0.85 + (sep ? 8 : 0)
+          })
+          return html
+        })()}
       </g>`
   })
   svg.addEventListener('mouseleave', () => { tip.innerHTML = '' })
