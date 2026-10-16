@@ -1351,23 +1351,31 @@ function isToday(iso) {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
 }
 
-// 按交易时间先进先出顺序计算加权平均成本
-// 买入：成本价 =（原持仓总成本 + 本次买入金额）÷（原持仓股数 + 本次买入股数）
-// 卖出：仅减少持仓股数，成本保持不变
+// 按交易时间先进先出（FIFO）计算持仓成本
+// 每笔买入作为一个批次记录，卖出时优先扣减最早买入的批次
+// 成本价 = 剩余（未卖出的最早批次）批次的加权平均价
 function calcCost(trades) {
-  let qty = 0, cost = 0
+  const lots = []
   trades.slice().sort((a, b) => new Date(a.time) - new Date(b.time)).forEach(t => {
     if (t.type === 'sell') {
-      qty -= t.qty
-    } else if (qty > 0) {
-      cost = (qty * cost + t.qty * t.price) / (qty + t.qty)
-      qty += t.qty
+      let remain = t.qty
+      while (remain > 0 && lots.length) {
+        const head = lots[0]
+        if (head.qty <= remain) {
+          remain -= head.qty
+          lots.shift()
+        } else {
+          head.qty -= remain
+          remain = 0
+        }
+      }
     } else {
-      cost = t.price
-      qty = t.qty
+      lots.push({ qty: t.qty, price: t.price })
     }
   })
-  return cost
+  const totalQty = lots.reduce((s, l) => s + l.qty, 0)
+  if (!totalQty) return 0
+  return lots.reduce((s, l) => s + l.qty * l.price, 0) / totalQty
 }
 
 // 渲染持仓汇总表（由交易明细动态汇总）及可展开的明细表
