@@ -591,8 +591,7 @@ function renderLineChart(container, pts, opts) {
   const x = i => (T_MAX <= 0 ? pl + iw / 2 : pl + (xs[i] / T_MAX) * iw)
   const y = v => pt + ih - ((v - lo) / (hi - lo)) * ih
   const firstVal = values[0], lastVal = values[values.length - 1], prevClose = opts.prevClose
-  const baseVal = (timeAxis && prevClose != null) ? prevClose : firstVal
-  const lineColor = lastVal >= baseVal ? '#ff4646' : '#00c864'
+  const lineColor = '#ff4646'
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map(f => pt + ih * f)
   const yText = yy => (hi - ((yy - pt) / ih) * (hi - lo)).toFixed(2)
   const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.y).toFixed(1)}`).join('')
