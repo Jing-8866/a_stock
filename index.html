@@ -746,7 +746,7 @@ function renderLineChart(container, pts, opts) {
       <line x1="${px.toFixed(1)}" y1="${pt}" x2="${px.toFixed(1)}" y2="${pt + ih}" stroke="#8ea0c8" stroke-width="1" stroke-dasharray="3 3"/>
       <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" fill="${lineColor}" stroke="#0a0e27" stroke-width="1.5"/>
       <g>
-        <text x="${pl + 4}" y="${pt - 4}" fill="#6a7a9e" font-size="${isMobile ? 10 : 11}" text-anchor="start">${timeAxis ? todayStr + ' ' : ''}${xLabel(i)}${timeAxis ? ` ${formatNumber(pts[i].y, 2)} 元` : `（${isDayK ? `开:${(typeof pts[i].open === 'number' && pts[i].open > 0) ? formatNumber(pts[i].open, 2) : 'N/A'} 收:${formatNumber(pts[i].y, 2)} ` : ''}高:${(typeof pts[i].high === 'number' && pts[i].high > 0) ? formatNumber(pts[i].high, 2) : 'N/A'} 低:${(typeof pts[i].low === 'number' && pts[i].low > 0) ? formatNumber(pts[i].low, 2) : 'N/A'}）`}</text>
+        <text x="${pl + 4}" y="${pt - 4}" fill="#6a7a9e" font-size="${isMobile ? 10 : 11}" text-anchor="start">${timeAxis ? todayStr + ' ' : ''}${xLabel(i)}${timeAxis ? ` ${formatNumber(pts[i].y, 2)} 元` : `（${isDayK ? `收:${formatNumber(pts[i].y, 2)} 开:${(typeof pts[i].open === 'number' && pts[i].open > 0) ? formatNumber(pts[i].open, 2) : 'N/A'} ` : ''}高:${(typeof pts[i].high === 'number' && pts[i].high > 0) ? formatNumber(pts[i].high, 2) : 'N/A'} 低:${(typeof pts[i].low === 'number' && pts[i].low > 0) ? formatNumber(pts[i].low, 2) : 'N/A'}）`}</text>
         ${(function() {
           const tArr = tradeAtPoint[i] || []
           if (!tArr.length) return ''
