@@ -860,10 +860,11 @@ app.use((req, res) => {
 // ============ 启动 ============
 app.listen(PORT, () => {
   console.log('╔═══════════════════════════════════════════╗')
-  console.log('║     A股数据桥接服务 v2.0                      ║')
+  console.log('║     A股数据桥接服务                        ║')
   console.log('╠═══════════════════════════════════════════╣')
   console.log(`║  服务地址: http://localhost:${PORT}              ║`)
   console.log('║  分析工具: http://localhost:' + PORT + '/index.html ║')
+  console.log('║  数据备份、导入: http://localhost:' + PORT + '/localStorage.html ║')
   console.log('║  API文档:  http://localhost:' + PORT + '/api/health              ║')
   console.log('╚═══════════════════════════════════════════╝')
 })
