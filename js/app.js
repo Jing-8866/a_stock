@@ -1604,6 +1604,10 @@ async function buildDailyData() {
       const currentBuyAmt = stockBuyAmt[bare]
       const currentSellAmt = stockSellAmt[bare]
       
+      // 记录每日持仓数量
+      if (!s.hold) s.hold = {}
+      s.hold[d] = currentHoldQty
+      
       // 今日持仓市值 = 当前收盘价 × 当前持仓数量
       const todayMarketValue = price * currentHoldQty
       // 累计买卖差额 = 累计卖出金额 - 累计买入金额
@@ -1657,11 +1661,11 @@ function calcAssetPeriod(all) {
     const anchor = assetSelMonth ? assetSelMonth + '-15' : latest
     start = anchor.slice(0, 7) + '-01'
     const ly = parseInt(start.slice(0, 4)), lm = parseInt(start.slice(5, 7))
-    end = new Date(ly, lm, 0).getDate()
+    end = new Date(ly, lm - 1, 0).getDate()
     end = `${start.slice(0, 7)}-${String(end).padStart(2, '0')}`
     prevStart = addMonths(start, -1)
     const py = parseInt(prevStart.slice(0, 4)), pm = parseInt(prevStart.slice(5, 7))
-    prevEnd = `${prevStart.slice(0, 7)}-${String(new Date(py, pm, 0).getDate()).padStart(2, '0')}`
+    prevEnd = `${prevStart.slice(0, 7)}-${String(new Date(py, pm - 1, 0).getDate()).padStart(2, '0')}`
     label = start.slice(0, 7)
   } else { // year
     const anchor = assetSelYear ? String(assetSelYear) : latest
@@ -1684,11 +1688,38 @@ function calcAssetPeriod(all) {
   })
   const buys = tradesIn.filter(t => t.type === 'buy').length
   const sells = tradesIn.filter(t => t.type === 'sell').length
-  const stockPnl = all.stocks.map(st => {
+  // 计算期间内每只股票的盈亏
+  const stockPnlRaw = all.stocks.map(st => {
     let p = 0
     days.forEach(d => { if (d >= start && d <= end) p += st.dayPnl[d] || 0 })
     return { code: st.code, name: st.name, pnl: p }
-  }).filter(x => x.pnl !== 0).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+  })
+  
+  // 按日分析时，展示当日有交易或持仓的股票（包含当日已清仓）
+  // 其他周期则只展示有盈亏的股票
+  let stockPnl
+  if (assetType === 'day') {
+    // 获取当日有交易的股票代码
+    const tradedCodes = new Set()
+    trades.forEach(t => {
+      const d = String(t.time).slice(0, 10)
+      if (d === start) tradedCodes.add(bareCode(t.code))
+    })
+    // 获取当日持仓 > 0 的股票代码
+    const heldCodes = new Set()
+    all.stocks.forEach(st => {
+      // 检查当日或之前一天是否有持仓（防止停牌等无交易日）
+      const holdQty = st.hold && (st.hold[start] ?? st.hold[prevDayIn(days, start)] ?? 0)
+      if (holdQty > 0) heldCodes.add(st.code)
+    })
+    // 合并有交易或有持仓的股票代码
+    const includedCodes = new Set([...tradedCodes, ...heldCodes])
+    // 筛选出当日有交易或有持仓的股票（无论盈亏）
+    stockPnl = stockPnlRaw.filter(x => includedCodes.has(x.code)).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+  } else {
+    // 非按日分析，只展示有盈亏的股票
+    stockPnl = stockPnlRaw.filter(x => x.pnl !== 0).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+  }
   
   // 计算累计盈亏（从最早交易日期到当前统计期间的结束日期）
   const totalProfit = sumRange(days[0], end)
@@ -1852,9 +1883,9 @@ function renderAssetChart(container, pts, opts) {
 
 // 月度每日收益日历（仅周一~周五，首尾周空位占位，无收益显示0）
 function renderDayCalendar(el, year, month, all) {
-  const daysInMonth = new Date(year, month, 0).getDate()
+  const daysInMonth = new Date(year, month - 1, 0).getDate()
   const firstDOW = new Date(year, month - 1, 1).getDay()
-  const startsMonday = firstDOW === 0 ? -6 : 1 - firstDOW
+  const startsMonday = firstDOW === 0 ? 2 : 2 - firstDOW
   const weeks = []
   for (let d = startsMonday; d <= daysInMonth; d += 7) {
     const cells = []
