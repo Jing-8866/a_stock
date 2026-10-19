@@ -61,6 +61,10 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
 .input-wrap input { width: 100%; padding-right: 28px; }
 .clear-input { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: transparent; color: #6a7a9e; padding: 2px 4px; font-size: 16px; line-height: 1; border-radius: 50%; cursor: pointer; }
 .clear-input:hover { color: #ff4646; transform: translateY(-50%); box-shadow: none; }
+.asset-input { background: #111836; border: 1px solid #2a3a6e; color: #e0e6ff; border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none; min-height: 32px; color-scheme: dark; }
+.asset-input:focus { border-color: #22d3ee; }
+.asset-select { background: #111836; border: 1px solid #2a3a6e; color: #e0e6ff; border-radius: 6px; padding: 5px 6px; font-size: 12px; outline: none; min-height: 32px; }
+.asset-select:focus { border-color: #22d3ee; }
 
 /* ================= 移动端适配 ================= */
 @media (max-width: 768px) {
@@ -105,6 +109,7 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
     <button class="market-tab" id="tabBtnHoldings" onclick="switchMainTab('holdings')">💼 持仓管理</button>
     <button class="market-tab" id="tabBtnScan" onclick="switchMainTab('scan')">🌐 全市场扫描</button>
     <button class="market-tab" id="tabBtnScreener" onclick="switchMainTab('screener')">🎯 条件筛选</button>
+    <button class="market-tab" id="tabBtnAsset" onclick="switchMainTab('asset')">📊 资产分析</button>
   </div>
 
   <!-- 单股分析 -->
@@ -216,15 +221,34 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
     <div id="screenerResult" class="result-area" style="display:none;"></div>
   </div>
 
+  <!-- 资产分析 -->
+  <div class="card" id="assetCard" style="display:none;">
+    <div class="card-title">📊 资产分析 <span style="font-size:12px;color:#6a7a9e;">按日/周/月/年/历史至今统计盈亏</span></div>
+    <div class="input-group">
+      <button class="market-tab" id="assetTypeDay" data-type="day" onclick="switchAssetType('day')">日</button>
+      <button class="market-tab" id="assetTypeWeek" data-type="week" onclick="switchAssetType('week')">周</button>
+      <button class="market-tab" id="assetTypeMonth" data-type="month" onclick="switchAssetType('month')">月</button>
+      <button class="market-tab" id="assetTypeYear" data-type="year" onclick="switchAssetType('year')">年</button>
+      <button class="market-tab" id="assetTypeAll" data-type="all" onclick="switchAssetType('all')">历史至今</button>
+    </div>
+    <div id="assetRangeWrap" class="input-group" style="margin-top:10px;flex-wrap:wrap;gap:6px;">
+      <input type="date" id="assetDateInput" class="asset-input" style="width:160px;" title="选择日期" onchange="loadAssetAnalysis()">
+      <span id="assetRangeLabel" style="color:#6a7a9e;font-size:13px;"></span>
+      <button class="secondary" onclick="loadAssetAnalysis()">🔄 刷新</button>
+    </div>
+    <div id="assetMsg"></div>
+    <div id="assetResult" class="result-area" style="display:none;"></div>
+  </div>
+
 </div>
 
 <script>
-// ============ 配置 ============
-// const API = 'http://localhost:7373/api'
+// ============ 配置 ============ 
+const API = 'http://localhost:7373/api'
 
-const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  ? 'http://localhost:7373/api'
-  : 'https://a-stock-api.zhao1055.workers.dev/api'
+// const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+//   ? 'http://localhost:7373/api'
+//   : 'https://{domain.name}/api'
 
 let watchlist = []
 let trades = []
@@ -510,8 +534,19 @@ async function loadChart(period) {
   try {
     const apiPeriod = period === 'day5' ? 'day' : period
     const count = period === 'day5' ? 5 : (period === 'minute' ? 1 : 320)
-    const res = await fetch(`${API}/kline/${currentChartCode}?period=${apiPeriod}&count=${count}`)
-    const data = await res.json()
+    const apiUrl = `${API}/kline/${currentChartCode}?period=${apiPeriod}&count=${count}`
+    console.log('API请求:', apiUrl) // 调试日志
+    const res = await fetch(apiUrl)
+    console.log('API响应状态:', res.status, res.statusText) // 调试日志
+    let data
+    try {
+      data = await res.json()
+    } catch (e) {
+      const text = await res.text()
+      console.log('API响应文本:', text) // 调试日志
+      throw new Error(`响应不是JSON格式: ${text}`)
+    }
+    console.log('API响应数据:', data) // 调试日志
     if (data.error) throw new Error(data.error)
     msgEl.innerHTML = ''
     if (data.period === 'minute' && data.points) {
@@ -527,6 +562,7 @@ async function loadChart(period) {
       msgEl.innerHTML = '<div class="error-msg">未获取到走势数据</div>'
     }
   } catch (e) {
+    console.error('加载走势图错误详情:', e) // 调试日志
     msgEl.innerHTML = `<div class="error-msg">走势图加载失败（${e.message}）</div>`
   }
 }
@@ -1532,8 +1568,8 @@ function renderHoldings(quoteMap = {}) {
 }
 
 function switchMainTab(tab) {
-  const tabs = ['analyze', 'watchlist', 'holdings', 'scan', 'screener']
-  const cardIds = { analyze: 'analyzeCard', watchlist: 'watchlistCard', holdings: 'holdingsCard', scan: 'scanCard', screener: 'screenerCard' }
+  const tabs = ['analyze', 'watchlist', 'holdings', 'scan', 'screener', 'asset']
+  const cardIds = { analyze: 'analyzeCard', watchlist: 'watchlistCard', holdings: 'holdingsCard', scan: 'scanCard', screener: 'screenerCard', asset: 'assetCard' }
   tabs.forEach(t => {
     const card = document.getElementById(cardIds[t])
     if (card) card.style.display = (t === tab) ? '' : 'none'
@@ -1547,6 +1583,16 @@ function switchMainTab(tab) {
   }
   if (tab === 'watchlist') loadWatchlist()
   if (tab === 'holdings') loadHoldings()
+  if (tab === 'asset') {
+    // 如果assetType不是day，则切换为day类型
+    if (assetType !== 'day') switchAssetType('day')
+    // 确保日期输入框有值
+    const dateInput = document.getElementById('assetDateInput')
+    if (dateInput && assetType === 'day' && !dateInput.value) {
+      dateInput.value = dateStr(new Date())
+    }
+    loadAssetAnalysis()
+  }
 }
 
 function toggleTrades(code) {
@@ -1639,6 +1685,803 @@ function fillHoldingFromWatchlist(code, name, price) {
   const card = document.getElementById('holdingsCard')
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
   document.getElementById('holdCostInput').focus()
+}
+
+// ============ 资产分析 ============
+let assetType = 'day'
+let assetSelDate = ''
+let assetSelMonth = ''
+let assetSelYear = 0
+let assetAllData = null
+
+function dateStr(d) {
+  const pd = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pd(d.getMonth() + 1)}-${pd(d.getDate())}`
+}
+function addDays(s, n) {
+  const d = new Date(s + 'T00:00:00')
+  d.setDate(d.getDate() + n)
+  return dateStr(d)
+}
+function addMonths(s, n) {
+  const d = new Date(s + 'T00:00:00')
+  d.setMonth(d.getMonth() + n)
+  return dateStr(d)
+}
+function prevDayIn(arr, day) {
+  for (let i = arr.length - 1; i >= 0; i--) if (arr[i] < day) return arr[i]
+  return null
+}
+
+function switchAssetType(type) {
+  assetType = type
+  document.querySelectorAll('#assetCard [data-type]').forEach(b => b.classList.toggle('active', b.dataset.type === type))
+  const dateInput = document.getElementById('assetDateInput')
+  const rangeLabel = document.getElementById('assetRangeLabel')
+  if (type === 'all') {
+    dateInput.style.display = 'none'
+    rangeLabel.textContent = '全部交易汇总'
+  } else {
+    dateInput.style.display = ''
+    if (type === 'month') {
+      dateInput.type = 'month'
+      dateInput.value = assetSelMonth || dateStr(new Date()).slice(0, 7)
+    } else if (type === 'year') {
+      dateInput.type = 'number'
+      dateInput.min = '2000'
+      dateInput.max = '2100'
+      dateInput.value = assetSelYear || new Date().getFullYear()
+      dateInput.style.width = '100px'
+    } else {
+      dateInput.type = 'date'
+      dateInput.value = assetSelDate || dateStr(new Date())
+      dateInput.style.width = '160px'
+    }
+    rangeLabel.textContent = ''
+  }
+  loadAssetAnalysis()
+}
+
+// 构建每只股票逐日盈亏（基于持仓管理的盈亏计算逻辑）
+async function buildDailyData() {
+  const codes = [...new Set(trades.map(t => normalizeCode(t.code)))].filter(Boolean)
+  const stocks = []
+  
+  // 先收集所有交易日期
+  const tradeDateSet = new Set()
+  trades.forEach(t => {
+    const d = String(t.time).slice(0, 10)
+    tradeDateSet.add(d)
+  })
+  
+  // 获取最早的交易日期（用于过滤K线数据）
+  const firstTradeDate = tradeDateSet.size > 0 ? [...tradeDateSet].sort()[0] : null
+  
+  // 收集所有K线日期（只从最早交易日期开始）
+  const allDateSet = new Set()
+  
+  // 存储每笔交易的明细（用于FIFO成本计算）
+  const tradeDetails = {} // { code: [{date, type, price, qty}] }
+  
+  for (const c of codes) {
+    const bare = bareCode(c)
+    const st = { code: bare, name: (trades.find(t => bareCode(t.code) === bare) || {}).name || bare, closes: {}, orders: {}, dayPnl: {}, hold: {} }
+    
+    // 初始化交易明细
+    tradeDetails[bare] = []
+    
+    // 先收集交易明细（用于后续计算）
+    trades.filter(t => bareCode(t.code) === bare).forEach(t => {
+      const d = String(t.time).slice(0, 10)
+      // 只记录从最早交易日期开始的交易
+      if (firstTradeDate && d < firstTradeDate) return
+      if (!st.orders[d]) st.orders[d] = { buyQty: 0, sellQty: 0, buyAmt: 0, sellAmt: 0 }
+      if (t.type === 'buy') { 
+        st.orders[d].buyQty += t.qty; 
+        st.orders[d].buyAmt += t.qty * t.price;
+        tradeDetails[bare].push({ date: d, type: 'buy', price: t.price, qty: t.qty });
+      } else { 
+        st.orders[d].sellQty += t.qty; 
+        st.orders[d].sellAmt += t.qty * t.price;
+        tradeDetails[bare].push({ date: d, type: 'sell', price: t.price, qty: t.qty });
+      }
+    })
+    
+    try {
+      const res = await fetch(`${API}/kline/${c}?period=day&count=1000`)
+      const data = await res.json()
+      ;(data.klines || []).forEach(k => { 
+        if (k.date) {
+          // 只保留从最早交易日期开始的K线数据
+          if (!firstTradeDate || k.date >= firstTradeDate) {
+            st.closes[k.date] = k.close
+            allDateSet.add(k.date)
+          }
+        }
+      })
+    } catch (e) { /* 无K线时仅统计已实现交易差额 */ }
+    
+    stocks.push(st)
+  }
+  
+  // days 从交易日期和K线日期中合并，确保包含持仓期间的所有交易日
+  // 从最早的交易日期开始，过滤掉早于最早的交易日期的K线数据
+  const filteredDateSet = new Set([...allDateSet].filter(d => !firstTradeDate || d >= firstTradeDate))
+  const days = [...new Set([...tradeDateSet, ...filteredDateSet])].sort()
+  console.log('最早交易日期:', firstTradeDate, '总天数:', days.length, '交易日期数:', tradeDateSet.size, 'K线日期数:', allDateSet.size) // 调试日志
+  if (!days.length) return null
+  
+  // 使用持仓管理的逻辑计算盈亏：总盈亏 = 现价×持仓 + 卖出-买入
+  // 对于每一天，计算该日的市值变化和已实现盈亏
+  
+  // 初始化每日盈亏
+  const stockDayPnl = {} // { code: { date: pnl } }
+  const stockBuyAmt = {} // { code: total buy amount }
+  const stockSellAmt = {} // { code: total sell amount }
+  const stockQty = {} // { code: current quantity }
+  
+  codes.forEach(c => {
+    const bare = bareCode(c)
+    stockDayPnl[bare] = {}
+    stockBuyAmt[bare] = 0
+    stockSellAmt[bare] = 0
+    stockQty[bare] = 0
+  })
+  
+  // 逐日计算盈亏
+  days.forEach(d => {
+    stocks.forEach(s => {
+      const o = s.orders[d] || { buyQty: 0, sellQty: 0, buyAmt: 0, sellAmt: 0 }
+      const close = s.closes[d]
+      const bare = s.code
+      
+      // 更新持仓数量
+      stockQty[bare] += o.buyQty - o.sellQty
+      
+      // 更新累计买入卖出金额
+      stockBuyAmt[bare] += o.buyAmt
+      stockSellAmt[bare] += o.sellAmt
+      
+      // 获取当前持仓市值和累计盈亏（持仓管理逻辑）
+      const price = close || 0
+      const currentHoldQty = stockQty[bare]
+      const currentBuyAmt = stockBuyAmt[bare]
+      const currentSellAmt = stockSellAmt[bare]
+      
+      // 今日持仓市值 = 当前收盘价 × 当前持仓数量
+      const todayMarketValue = price * currentHoldQty
+      // 累计买卖差额 = 累计卖出金额 - 累计买入金额
+      const totalRealized = currentSellAmt - currentBuyAmt
+      // 累计总盈亏 = 今日持仓市值 + 累计买卖差额
+      const totalProfit = todayMarketValue + totalRealized
+      
+      // 获取昨天的累计总盈亏
+      const prevDay = d > days[0] ? days[days.indexOf(d) - 1] : null
+      const prevTotalProfit = prevDay ? (stockDayPnl[bare][prevDay] || 0) : 0
+      
+      // 今日盈亏 = 今日累计总盈亏 - 昨日累计总盈亏
+      const pnl = totalProfit - prevTotalProfit
+      
+      s.dayPnl[d] = pnl
+      stockDayPnl[bare][d] = totalProfit
+    })
+  })
+  
+  return { stocks, days, latestDay: days[days.length - 1] }
+}
+
+// 计算当前口径周期（含上周期）的总盈亏、买卖笔数与重点股票
+function calcAssetPeriod(all) {
+  const days = all.days
+  const latest = all.latestDay
+  const now = dateStr(new Date())
+  let start, end, prevStart, prevEnd, label
+  if (assetType === 'all') {
+    start = days[0]; end = days[days.length - 1]
+    prevStart = prevEnd = null
+    label = `${start} ~ ${end}`
+  } else if (assetType === 'day') {
+    end = assetSelDate || (days.includes(now) ? now : latest)
+    start = end
+    prevEnd = prevDayIn(days, end) || null
+    prevStart = prevEnd
+    label = end
+  } else if (assetType === 'week') {
+    const anchor = assetSelDate || latest
+    const d = new Date(anchor + 'T00:00:00')
+    const dow = d.getDay()
+    const mondayOffset = dow === 0 ? -6 : 1 - dow
+    start = addDays(anchor, mondayOffset)
+    end = addDays(start, 4)
+    const pOffset = mondayOffset - 7
+    prevStart = addDays(anchor, pOffset)
+    prevEnd = addDays(prevStart, 4)
+    label = `${start} ~ ${end}`
+  } else if (assetType === 'month') {
+    const anchor = assetSelMonth ? assetSelMonth + '-15' : latest
+    start = anchor.slice(0, 7) + '-01'
+    const ly = parseInt(start.slice(0, 4)), lm = parseInt(start.slice(5, 7))
+    end = new Date(ly, lm, 0).getDate()
+    end = `${start.slice(0, 7)}-${String(end).padStart(2, '0')}`
+    prevStart = addMonths(start, -1)
+    const py = parseInt(prevStart.slice(0, 4)), pm = parseInt(prevStart.slice(5, 7))
+    prevEnd = `${prevStart.slice(0, 7)}-${String(new Date(py, pm, 0).getDate()).padStart(2, '0')}`
+    label = start.slice(0, 7)
+  } else { // year
+    const anchor = assetSelYear ? String(assetSelYear) : latest
+    start = anchor.slice(0, 4) + '-01-01'
+    end = anchor.slice(0, 4) + '-12-31'
+    prevStart = (parseInt(anchor.slice(0, 4)) - 1) + '-01-01'
+    prevEnd = (parseInt(anchor.slice(0, 4)) - 1) + '-12-31'
+    label = anchor.slice(0, 4)
+  }
+  const sumRange = (s, e) => {
+    let pnl = 0
+    days.forEach(d => { if (d >= s && d <= e) pnl += all.stocks.reduce((x, st) => x + (st.dayPnl[d] || 0), 0) })
+    return pnl
+  }
+  const cur = sumRange(start, end)
+  const prev = (prevStart && prevEnd) ? sumRange(prevStart, prevEnd) : null
+  const tradesIn = trades.filter(t => {
+    const d = String(t.time).slice(0, 10)
+    return d >= start && d <= end
+  })
+  const buys = tradesIn.filter(t => t.type === 'buy').length
+  const sells = tradesIn.filter(t => t.type === 'sell').length
+  const stockPnl = all.stocks.map(st => {
+    let p = 0
+    days.forEach(d => { if (d >= start && d <= end) p += st.dayPnl[d] || 0 })
+    return { code: st.code, name: st.name, pnl: p }
+  }).filter(x => x.pnl !== 0).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+  
+  // 计算累计盈亏（从最早交易日期到当前统计期间的结束日期）
+  const totalProfit = sumRange(days[0], end)
+  
+  // 取前5支盈亏金额绝对值最大的股票
+  const topStocks = stockPnl.slice(0, 5)
+  const positiveStocks = topStocks.filter(x => x.pnl > 0)
+  const negativeStocks = topStocks.filter(x => x.pnl < 0)
+  return { start, end, prevStart, prevEnd, label, cur, prev, totalProfit, buys, sells, positiveStocks, negativeStocks }
+}
+
+// 悬浮提示：显示日期期间与收益金额
+function showAssetTip(e, label, value) {
+  const tip = document.getElementById('assetTip')
+  if (!tip) return
+  tip.innerHTML = `<b>${label}</b><br><span style="color:${value >= 0 ? '#ff4646' : '#00c864'};">${value >= 0 ? '+' : ''}${formatNumber(value, 2)}</span>`
+  tip.style.display = 'block'
+  const host = tip.parentElement || document.body
+  const box = host.getBoundingClientRect()
+  let x = e.clientX - box.left + 12, y = e.clientY - box.top + 12
+  const tw = tip.offsetWidth || 110
+  if (x + tw > box.width - 6) x = x - tw - 24
+  if (y + 46 > box.height - 6) y = y - 56
+  tip.style.left = x + 'px'
+  tip.style.top = y + 'px'
+}
+function hideAssetTip() {
+  const tip = document.getElementById('assetTip')
+  if (tip) tip.style.display = 'none'
+}
+
+function renderAssetChart(container, pts, opts) {
+  opts = opts || {}
+  const isMobile = window.innerWidth <= 768
+  const W = isMobile ? window.innerWidth - 34 : 780
+  const H = 170
+  const pl = 64, pr = 16, pt = 16, pb = 26
+  const iw = W - pl - pr, ih = H - pt - pb
+  const vals = pts.map(p => p.value).filter(v => typeof v === 'number' && isFinite(v))
+  if (!vals.length) { container.innerHTML = '<div style="color:#6a7a9e;">暂无收益数据</div>'; return }
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals)
+  if (lo === hi) { lo -= 1; hi += 1 }
+  const span = hi - lo
+  const y = v => pt + ih - ((v - lo) / span) * ih
+  const xOf = i => pl + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw)
+  const zeroY = y(0)
+  const stroke = opts.type === 'bar' ? '' : (innerWidth <= 768 ? '1.5' : '2')
+  let body = ''
+  if (opts.type === 'bar') {
+    const n = pts.length
+    const bw = Math.min(46, (iw / n) * 0.62)
+    // 先绘制所有透明交互区域（在底层）
+    pts.forEach((p, i) => {
+      const cx = xOf(i)
+      // 透明交互区域：覆盖整个柱子宽度和图表高度
+      body += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${pt.toFixed(1)}" width="${bw.toFixed(1)}" height="${ih.toFixed(1)}" fill="transparent" data-label="${p.label}" data-value="${p.value || 0}"/>`
+    })
+    // 再绘制所有有颜色的柱子（在上层）
+    pts.forEach((p, i) => {
+      const cx = xOf(i)
+      const v = p.value || 0
+      const c = v >= 0 ? '#ff4646' : '#00c864'
+      const yTop = Math.min(y(v), zeroY)
+      const h = Math.abs(y(v) - zeroY)
+      body += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, 1).toFixed(1)}" fill="${c}" rx="2"/>`
+      body += `<title>${p.label}: ${v >= 0 ? '+' : ''}${formatNumber(v, 2)}</title></rect>`
+    })
+  } else {
+    const path = pts.map((p, i) => `${i ? 'L' : 'M'}${xOf(i).toFixed(1)},${y(p.value || 0).toFixed(1)}`).join('')
+    const c = (pts[pts.length - 1].value || 0) >= 0 ? '#ff4646' : '#00c864'
+    body += `<path d="${path}" fill="none" stroke="${c}" stroke-width="${stroke}" stroke-linejoin="round" stroke-linecap="round"/>`
+    pts.forEach((p, i) => {
+      body += `<circle cx="${xOf(i).toFixed(1)}" cy="${y(p.value || 0).toFixed(1)}" r="3" fill="${(p.value || 0) >= 0 ? '#ff4646' : '#00c864'}" onmousemove="showAssetTip(event,'${p.label}',${p.value || 0})" onmouseleave="hideAssetTip()"><title>${p.label}: ${(p.value || 0) >= 0 ? '+' : ''}${formatNumber(p.value || 0, 2)}</title></circle>`
+    })
+  }
+  // 0轴基准线
+  body += `<line x1="${pl}" y1="${zeroY.toFixed(1)}" x2="${W - pr}" y2="${zeroY.toFixed(1)}" stroke="#3a4a76" stroke-width="1" stroke-dasharray="3 3"/>`
+  // x轴标签（间隔采样，最多8个）
+  const step = Math.ceil(pts.length / 8)
+  pts.forEach((p, i) => {
+    if (i % step === 0 || i === pts.length - 1) {
+      let t = p.label
+      if (t.length > 5) t = t.slice(0, 5)
+      body += `<text x="${xOf(i).toFixed(1)}" y="${(H - 8).toFixed(1)}" fill="#6a7a9e" font-size="10" text-anchor="middle">${t}</text>`
+    }
+  })
+  container.style.position = 'relative'
+  container.innerHTML = `<div id="assetTip" style="position:absolute;display:none;pointer-events:none;background:#16204a;border:1px solid #2a3a6e;border-radius:6px;padding:5px 9px;font-size:12px;color:#e0e6ff;z-index:30;white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.45);"></div><svg width="100%" height="auto" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="display:block;background:#0a0e27;border:1px solid #1e2d5a;border-radius:8px;cursor:crosshair;">${body}</svg>`
+  // 事件委托：使用 SVG 坐标系统计算位置（正确处理 PC 和移动端）
+  const svg = container.querySelector('svg')
+  const tip = document.getElementById('assetTip')
+  const transparentRects = svg.querySelectorAll('rect[data-label]')
+  
+  function getSvgCoordinates(event, svgElement, w, h) {
+    const rect = svgElement.getBoundingClientRect()
+    const svgWidth = w
+    const svgHeight = h
+    const x = (event.clientX - rect.left) * (svgWidth / rect.width)
+    const y = (event.clientY - rect.top) * (svgHeight / rect.height)
+    return { x, y }
+  }
+  
+  svg.addEventListener('mousemove', (e) => {
+    if (opts.type !== 'bar') return
+    const svgRect = svg.getBoundingClientRect()
+    if (e.clientX < svgRect.left || e.clientX > svgRect.right || e.clientY < svgRect.top || e.clientY > svgRect.bottom) {
+      tip.style.display = 'none'
+      return
+    }
+    const svgCoords = getSvgCoordinates(e, svg, W, H)
+    const mx = svgCoords.x
+    const my = svgCoords.y
+    let found = false
+    transparentRects.forEach((el) => {
+      if (found) return
+      const x = parseFloat(el.getAttribute('x'))
+      const width = parseFloat(el.getAttribute('width'))
+      const y = parseFloat(el.getAttribute('y'))
+      const height = parseFloat(el.getAttribute('height'))
+      if (mx >= x && mx <= x + width && my >= y && my <= y + height) {
+        const label = el.getAttribute('data-label')
+        const value = parseFloat(el.getAttribute('data-value'))
+        showAssetTip(e, label, value)
+        found = true
+      }
+    })
+    if (!found) tip.style.display = 'none'
+  })
+  
+  svg.addEventListener('mouseleave', () => {
+    tip.style.display = 'none'
+  })
+  
+  svg.addEventListener('touchstart', (e) => {
+    if (opts.type !== 'bar') return
+    const touch = e.touches[0]
+    const svgRect = svg.getBoundingClientRect()
+    if (touch.clientX < svgRect.left || touch.clientX > svgRect.right || touch.clientY < svgRect.top || touch.clientY > svgRect.bottom) {
+      e.preventDefault()
+      return
+    }
+    const svgCoords = getSvgCoordinates(touch, svg, W, H)
+    const mx = svgCoords.x
+    const my = svgCoords.y
+    let found = false
+    transparentRects.forEach((el) => {
+      if (found) return
+      const x = parseFloat(el.getAttribute('x'))
+      const width = parseFloat(el.getAttribute('width'))
+      const y = parseFloat(el.getAttribute('y'))
+      const height = parseFloat(el.getAttribute('height'))
+      if (mx >= x && mx <= x + width && my >= y && my <= y + height) {
+        const label = el.getAttribute('data-label')
+        const value = parseFloat(el.getAttribute('data-value'))
+        showAssetTip({ clientX: touch.clientX, clientY: touch.clientY }, label, value)
+        found = true
+        e.preventDefault()
+      }
+    })
+  })
+}
+
+// 月度每日收益日历（仅周一~周五，首尾周空位占位，无收益显示0）
+function renderDayCalendar(el, year, month, all) {
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const firstDOW = new Date(year, month - 1, 1).getDay()
+  const startsMonday = firstDOW === 0 ? -6 : 1 - firstDOW
+  const weeks = []
+  for (let d = startsMonday; d <= daysInMonth; d += 7) {
+    const cells = []
+    for (let w = 0; w < 5; w++) {
+      const dd = d + w
+      if (dd >= 1 && dd <= daysInMonth) {
+        const s = `${year}-${String(month).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
+        let pnl = 0
+        all.stocks.forEach(st => { pnl += st.dayPnl[s] || 0 })
+        cells.push(`<td style="border:1px solid #24325f;padding:5px;text-align:center;background:#111836;">
+          <div style="font-size:13px;color:#e0e6ff;">${dd}</div>
+          <div style="font-size:10px;color:${pnl >= 0 ? '#ff4646' : '#00c864'};">${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}</div>
+        </td>`)
+      } else {
+        cells.push('<td style="border:1px solid #24325f;padding:5px;background:#0a0e27;"></td>')
+      }
+    }
+    weeks.push(`<tr>${cells.join('')}</tr>`)
+  }
+  el.innerHTML = `
+    <div style="margin:10px 0 4px;font-size:13px;color:#8ea0c8;">📅 ${year}年${month}月 收益日历</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;min-width:420px;border-collapse:collapse;font-size:12px;border:1px solid #1e2d5a;">
+        <thead><tr>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">一</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">二</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">三</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">四</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">五</th>
+        </tr></thead>
+        <tbody>${weeks.join('')}</tbody>
+      </table>
+    </div>`
+}
+
+// 周收益日历（仅该周周一~周五）
+function renderWeekCalendar(el, monday, all) {
+  const cells = []
+  for (let w = 0; w < 5; w++) {
+    const s = addDays(monday, w)
+    const d = new Date(s + 'T00:00:00')
+    let pnl = 0
+    all.stocks.forEach(st => { pnl += st.dayPnl[s] || 0 })
+    cells.push(`<td style="border:1px solid #24325f;padding:5px;text-align:center;background:#111836;width:20%;">
+      <div style="font-size:13px;color:#e0e6ff;">${d.getDate()}</div>
+      <div style="font-size:10px;color:${pnl >= 0 ? '#ff4646' : '#00c864'};">${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}</div>
+    </td>`)
+  }
+  el.innerHTML = `
+    <div style="margin:10px 0 4px;font-size:13px;color:#8ea0c8;">📅 ${monday.slice(0, 4)}年${parseInt(monday.slice(5, 7))}月${parseInt(monday.slice(8, 10))}日 起一周 收益日历</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;min-width:420px;border-collapse:collapse;font-size:12px;border:1px solid #1e2d5a;">
+        <thead><tr>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">一</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">二</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">三</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">四</th>
+          <th style="padding:4px;border:1px solid #24325f;background:#16204a;color:#8ea0c8;">五</th>
+        </tr></thead>
+        <tbody><tr>${cells.join('')}</tr></tbody>
+      </table>
+    </div>`
+}
+
+// 年收益日历（12个月格）
+function renderYearCalendar(el, year, all, title) {
+  const monthRows = []
+  for (let m = 1; m <= 12; m++) {
+    const key = `${year}-${String(m).padStart(2, '0')}`
+    let v = 0
+    all.stocks.forEach(st => { all.days.filter(d => d.slice(0, 7) === key).forEach(d => { v += st.dayPnl[d] || 0 }) })
+    monthRows.push({ m, v })
+  }
+  el.innerHTML = `
+    <div style="margin:10px 0 4px;font-size:13px;color:#8ea0c8;">📅 ${title || `${year} 年收益日历`}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;">
+      ${monthRows.map(r => `
+        <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;text-align:center;">
+          <div style="font-size:12px;color:#6a7a9e;">${r.m} 月</div>
+          <div style="font-size:15px;color:${r.v >= 0 ? '#ff4646' : '#00c864'};">${r.v >= 0 ? '+' : ''}${formatNumber(r.v, 2)}</div>
+        </div>`).join('')}
+    </div>`
+}
+
+function renderAssetAnalysis() {
+  const resultEl = document.getElementById('assetResult')
+  const msgEl = document.getElementById('assetMsg')
+  document.querySelectorAll('#assetCard [data-type]').forEach(b => b.classList.toggle('active', b.dataset.type === assetType))
+  if (!trades.length) {
+    msgEl.innerHTML = '<div class="success-msg">暂无交易明细，请先到「持仓管理」录入交易后再统计</div>'
+    resultEl.style.display = 'none'
+    return
+  }
+  resultEl.style.display = 'block'
+  if (!assetAllData || !assetAllData.days.length) {
+    resultEl.innerHTML = '<div class="error-msg">行情数据为空，无法统计</div>'
+    return
+  }
+  if (assetType === 'day' && document.getElementById('assetDateInput').type !== 'date') { /* 已切换 */ }
+  const p = calcAssetPeriod(assetAllData)
+  const rangeLabel = document.getElementById('assetRangeLabel')
+  rangeLabel.textContent = `${p.label}${p.start !== p.end ? '' : ''}`
+  const fmt = n => `${n >= 0 ? '+' : ''}${formatNumber(n, 2)}`
+  const diff = (p.prev != null) ? p.cur - p.prev : null
+  const pct = (p.prev != null && p.prev !== 0) ? ((p.cur - p.prev) / Math.abs(p.prev)) * 100 : null
+  let html = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;">
+      <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#6a7a9e;">期间盈亏</div>
+        <div style="font-size:20px;color:${p.cur >= 0 ? '#ff4646' : '#00c864'};">${fmt(p.cur)}</div>
+      </div>
+      <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#6a7a9e;">累计盈亏（截止到当前期间）</div>
+        <div style="font-size:20px;">${fmt(p.totalProfit)}</div>
+      </div>
+      <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#6a7a9e;">买卖笔数</div>
+        <div style="font-size:18px;color:#e0e6ff;">买 ${p.buys}  · 卖 ${p.sells} </div>
+      </div>
+    </div>`
+  // 上周期对比
+  if (diff != null) {
+    html += `
+    <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;margin-bottom:14px;">
+      <div style="font-size:13px;color:#8ea0c8;margin-bottom:6px;">📈 对比上一周期（${p.prevStart} ~ ${p.prevEnd}）</div>
+      <div style="display:flex;flex-wrap:wrap;gap:20px;font-size:13px;">
+        <span>上期盈亏：<b style="color:${p.prev >= 0 ? '#ff4646' : '#00c864'};">${fmt(p.prev)}</b></span>
+        <span>本期差额：<b style="color:${diff >= 0 ? '#ff4646' : '#00c864'};">${fmt(diff)}</b></span>
+        <span>变化幅度：<b style="color:${diff >= 0 ? '#ff4646' : '#00c864'};">${pct != null ? `${pct >= 0 ? '+' : ''}${formatNumber(pct, 2)}%` : '--'}</b></span>
+      </div>
+    </div>`
+  }
+  // 重点股票（前5支收益最高和前5支亏损最大，分左右两栏）
+  if (p.positiveStocks && p.positiveStocks.length > 0 || p.negativeStocks && p.negativeStocks.length > 0) {
+    const stockRow = (tag, st, isPositive) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 2px;border-bottom:1px solid #1e2d5a;font-size:13px;">
+        <span style="color:#8ea0c8;flex:0 0 92px;">${tag}</span>
+        <span style="color:#e0e6ff;flex:1;">${st.name}(${st.code})</span>
+        <b style="color:${isPositive ? '#ff4646' : '#00c864'};">${isPositive ? '+' : ''}${formatNumber(st.pnl, 2)}</b>
+      </div>`
+    
+    html += `
+    <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;margin-bottom:12px;">
+      <div style="font-size:13px;color:#8ea0c8;margin-bottom:4px;">⭐ 重点股票（期间盈亏贡献）</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
+        ${p.positiveStocks && p.positiveStocks.length > 0 ? `
+          <div style="border:1px solid #1e2d5a;border-radius:6px;overflow:hidden;">
+            <div style="background:#16204a;padding:8px 10px;font-size:12px;color:#ff4646;border-bottom:1px solid #1e2d5a;">📈 收益最高（前${p.positiveStocks.length}）</div>
+            <div style="padding:4px 0;">${p.positiveStocks.map((st, i) => stockRow(`${i + 1}.`, st, true)).join('')}</div>
+          </div>` : ''}
+        ${p.negativeStocks && p.negativeStocks.length > 0 ? `
+          <div style="border:1px solid #1e2d5a;border-radius:6px;overflow:hidden;">
+            <div style="background:#16204a;padding:8px 10px;font-size:12px;color:#00c864;border-bottom:1px solid #1e2d5a;">📉 亏损最大（前${p.negativeStocks.length}）</div>
+            <div style="padding:4px 0;">${p.negativeStocks.map((st, i) => stockRow(`${i + 1}.`, st, false)).join('')}</div>
+          </div>` : ''}
+      </div>
+    </div>`
+  }
+  // 周期内每日/每月盈亏走势 + 日历
+  let subInfo = null
+  let allYearFlag = false
+  if (assetType === 'week') {
+    const curWeek = dateStr(new Date()) >= p.start && dateStr(new Date()) <= p.end
+    const daysOfWeek = assetAllData.days.filter(d => d >= p.start && d <= (curWeek ? addDays(assetAllData.latestDay, 0) : p.end))
+    subInfo = {
+      title: `📉 ${p.label} 每日收益走势${curWeek ? '（截至最新交易日）' : ''}`,
+      pts: daysOfWeek.map(d => ({ label: d.slice(5), value: assetAllData.stocks.reduce((s, st) => s + (st.dayPnl[d] || 0), 0) })),
+      cal: [p.start]
+    }
+    html += `<div id="assetSubInfo"></div>`
+  } else if (assetType === 'month') {
+    const year = parseInt(p.start.slice(0, 4)), month = parseInt(p.start.slice(5, 7))
+    const curMonth = dateStr(new Date()).slice(0, 7) === p.start.slice(0, 7)
+    const daysOfMonth = assetAllData.days.filter(d => d >= p.start && d <= (curMonth ? addDays(assetAllData.latestDay, 0) : p.end))
+    subInfo = {
+      title: `📉 ${p.label} 每日收益走势${curMonth ? '（截至最新交易日）' : ''}`,
+      pts: daysOfMonth.map(d => ({ label: d.slice(5), value: assetAllData.stocks.reduce((s, st) => s + (st.dayPnl[d] || 0), 0) })),
+      cal: { year, month }
+    }
+    html += `<div id="assetSubInfo"></div>`
+  } else if (assetType === 'year') {
+    const year = parseInt(p.start.slice(0, 4))
+    const daysOfYear = assetAllData.days.filter(d => d >= p.start && d <= p.end)
+    const monthMap = {}
+    daysOfYear.forEach(d => {
+      const mk = d.slice(5, 7)
+      monthMap[mk] = (monthMap[mk] || 0) + assetAllData.stocks.reduce((s, st) => s + (st.dayPnl[d] || 0), 0)
+    })
+    subInfo = {
+      title: `📉 ${p.label} 每月收益走势`,
+      pts: Object.keys(monthMap).sort().map(mk => ({ label: mk + '月', value: monthMap[mk] })),
+      cal: { year, month: null }
+    }
+    html += `<div id="assetSubInfo"></div>`
+  } else if (assetType === 'all') {
+    allYearFlag = true
+    html += `<div id="assetSubInfo"></div>`
+  }
+  resultEl.innerHTML = html
+  // 渲染图
+  if ((assetType === 'week' || assetType === 'month' || assetType === 'year') && subInfo) {
+    const wrap = document.getElementById('assetSubInfo')
+    wrap.innerHTML = `<div style="font-size:13px;color:#8ea0c8;margin-bottom:4px;margin-top:6px;">${subInfo.title}</div>`
+    renderAssetChart(wrap, subInfo.pts, { type: 'bar' })
+    const calEl = document.createElement('div')
+    wrap.appendChild(calEl)
+    if (assetType === 'week') renderWeekCalendar(calEl, subInfo.cal[0], assetAllData)
+    else if (assetType === 'month') renderDayCalendar(calEl, subInfo.cal.year, subInfo.cal.month, assetAllData)
+    else renderYearCalendar(calEl, subInfo.cal.year, assetAllData)
+  } else if (allYearFlag) {
+    renderAllAnalysis(document.getElementById('assetSubInfo'))
+  }
+}
+
+async function loadAssetAnalysis() {
+  const dateInput = document.getElementById('assetDateInput')
+  if (dateInput) {
+    if (assetType === 'day' || assetType === 'week') assetSelDate = dateInput.value || assetSelDate
+    else if (assetType === 'month') assetSelMonth = dateInput.value || assetSelMonth
+    else if (assetType === 'year') assetSelYear = parseInt(dateInput.value) || assetSelYear
+  }
+  const msgEl = document.getElementById('assetMsg')
+  msgEl.innerHTML = '<span class="loading"></span>统计中...'
+  try {
+    assetAllData = await buildDailyData()
+    renderAssetAnalysis()
+    msgEl.innerHTML = ''
+  } catch (e) {
+    msgEl.innerHTML = `<div class="error-msg">资产统计失败（${e.message}）</div>`
+    document.getElementById('assetResult').style.display = 'none'
+  }
+}
+
+// 历史至今视图：按年/按月切换，切换控件在走势上方，同时作用于走势与日历
+let allCalView = 'month'
+let allCalSelYear = ''
+
+function assetYearlyMap() {
+  if (!assetAllData || !assetAllData.days) return {}
+  const yearly = {}
+  assetAllData.days.forEach(d => {
+    const y = d.slice(0, 4)
+    const v = assetAllData.stocks.reduce((s, st) => s + (st.dayPnl[d] || 0), 0)
+    yearly[y] = (yearly[y] || 0) + v
+  })
+  return yearly
+}
+
+function assetMonthlyMap(year) {
+  if (!assetAllData || !assetAllData.days) return {}
+  const months = {}
+  for (let m = 1; m <= 12; m++) months[m] = 0
+  assetAllData.days.filter(d => d.slice(0, 4) === String(year)).forEach(d => {
+    const mk = parseInt(d.slice(5, 7))
+    months[mk] = (months[mk] || 0) + assetAllData.stocks.reduce((s, st) => s + (st.dayPnl[d] || 0), 0)
+  })
+  return months
+}
+
+function allCalYears() {
+  // 返回所有年份（从交易开始年份到最新年份）
+  if (!assetAllData || !assetAllData.days || !assetAllData.days.length) return []
+  const years = [...new Set(assetAllData.days.map(d => d.slice(0, 4)))].sort((a, b) => parseInt(a) - parseInt(b))
+  return years
+}
+
+function renderAllAnalysis(el) {
+  if (!el) return
+  const years = allCalYears()
+  if (!years.length) { el.innerHTML = '<div style="color:#6a7a9e;">暂无年度数据</div>'; return }
+  if (!allCalSelYear) allCalSelYear = years[years.length - 1]
+  const yearly = assetYearlyMap()
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
+      <button class="market-tab ${allCalView === 'month' ? 'active' : ''}" id="allCalBtnMonth" onclick="assetCalSetView('month')">按月</button>
+      <button class="market-tab ${allCalView === 'year' ? 'active' : ''}" id="allCalBtnYear" onclick="assetCalSetView('year')">按年</button>
+      <span id="allCalYearSel" style="${allCalView === 'month' ? '' : 'display:none;'}margin-left:6px;">
+        选择年份：
+        <select class="asset-select" onchange="assetCalSetYear(this.value)">
+          ${years.map(y => `<option value="${y}" ${y === allCalSelYear ? 'selected' : ''}>${y} 年</option>`).join('')}
+        </select>
+      </span>
+    </div>
+    <div id="assetAllViewBody"></div>`
+  renderAllViewBody()
+}
+
+function renderAllViewBody() {
+  const body = document.getElementById('assetAllViewBody')
+  if (!body) return
+  const yearly = assetYearlyMap()
+  const years = allCalYears()
+  
+  // 构建完整的HTML
+  const fullHtml = buildAllViewHtml(yearly, years, allCalView, allCalSelYear)
+  body.innerHTML = fullHtml
+  // 延迟执行，确保DOM已渲染
+  setTimeout(() => {
+    const chartHost = document.getElementById('allChartHost')
+    if (chartHost) {
+      if (allCalView === 'year') {
+        const yearPts = years.map(y => ({ label: y, value: yearly[y] }))
+        renderAssetChart(chartHost, yearPts, { type: 'bar' })
+      } else {
+        const year = allCalSelYear || years[years.length - 1]
+        const monthlyData = {}
+        years.forEach(y => {
+          const months = assetMonthlyMap(y)
+          monthlyData[y] = months
+        })
+        const currentMonths = monthlyData[year]
+        const monthPts = Object.keys(currentMonths).map(m => ({ label: parseInt(m) + '月', value: currentMonths[m] }))
+        renderAssetChart(chartHost, monthPts, { type: 'bar' })
+      }
+    }
+  }, 0)
+}
+
+function buildAllViewHtml(yearly, years, view, selYear) {
+  // 渲染走势
+  let chartHtml = ''
+  if (view === 'year') {
+    chartHtml = `<div style="font-size:13px;color:#8ea0c8;margin-bottom:4px;">📉 年度收益走势</div><div id="allChartHost"></div>`
+  } else {
+    const year = selYear || years[years.length - 1]
+    chartHtml = `<div style="font-size:13px;color:#8ea0c8;margin-bottom:4px;">📈 ${year} 年 每月收益走势</div><div id="allChartHost"></div>`
+  }
+  
+  // 渲染收益日历（按年倒序，默认折叠）
+  let calendarHtml = '<div style="font-size:13px;color:#8ea0c8;margin:12px 0 4px;">📅 收益日历（点击年份展开）</div>'
+  years.slice().reverse().forEach(y => {
+    const months = assetMonthlyMap(y)
+    const yearTotal = Object.values(months).reduce((sum, v) => sum + v, 0)
+    calendarHtml += `
+      <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;overflow:hidden;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #1e2d5a;cursor:pointer;" onclick="toggleYearCalendar('${y}')">
+          <div style="color:#e0e6ff;">${y} 年 ${y === years[years.length - 1] ? `<span style="color:#6a7a9e;font-size:11px;"></span>` : ''}</div>
+          <div style="color:${yearTotal >= 0 ? '#ff4646' : '#00c864'};font-size:13px;">${yearTotal >= 0 ? '+' : ''}${formatNumber(yearTotal, 2)}</div>
+          <span id="icon-${y}" style="color:#6a7a9e;">▼</span>
+        </div>
+        <div id="calendar-${y}" style="display:none;">
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;padding:8px;">
+            ${Array.from({ length: 12 }, (_, i) => i + 1).map(m => `
+              <div style="background:#16204a;border:1px solid #24325f;border-radius:6px;padding:8px;text-align:center;">
+                <div style="font-size:12px;color:#6a7a9e;">${m}月</div>
+                <div style="font-size:13px;color:${(months[m] || 0) >= 0 ? '#ff4646' : '#00c864'};">${(months[m] || 0) >= 0 ? '+' : ''}${formatNumber(months[m] || 0, 2)}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `
+  })
+  
+  return chartHtml + calendarHtml
+}
+
+function assetCalSetView(view) {
+  allCalView = view
+  const sel = document.getElementById('allCalYearSel')
+  const btnY = document.getElementById('allCalBtnYear')
+  const btnM = document.getElementById('allCalBtnMonth')
+  if (btnY) btnY.classList.toggle('active', view === 'year')
+  if (btnM) btnM.classList.toggle('active', view === 'month')
+  if (sel) sel.style.display = view === 'month' ? '' : 'none'
+  renderAllViewBody()
+}
+
+function assetCalSetYear(year) {
+  allCalSelYear = String(year)
+  renderAllViewBody()
+}
+
+// 切换年份日历的展开/折叠
+function toggleYearCalendar(year) {
+  const el = document.getElementById('calendar-' + year)
+  const icon = document.getElementById('icon-' + year)
+  if (el && icon) {
+    const isHidden = el.style.display === 'none' || !el.style.display
+    el.style.display = isHidden ? 'grid' : 'none'
+    icon.textContent = isHidden ? '▲' : '▼'
+  }
 }
 
 // ============ 回车快捷键 ============
