@@ -1,6 +1,6 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #0a0e27; color: #e0e0e0; min-height: 100vh; -webkit-tap-highlight-color: transparent; }
-.header { background: linear-gradient(135deg, #1a1f4e 0%, #0a0e27 100%); padding: 15px 20px; border-bottom: 1px solid #1e2d5a; display: flex; align-items: center; gap: 15px; }
+.header { background: linear-gradient(135deg, #1a1f4e 0%, #0a0e27 100%); padding: 15px 20px; border-bottom: 1px solid #1e2d5a; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
 .header h1 { font-size: 18px; color: #00d4ff; flex: 1; }
 .header .subtitle { font-size: 11px; color: #6a7a9e; margin-top: 2px; }
 .container { max-width: 1400px; margin: 0 auto; padding: 15px; }
@@ -58,6 +58,19 @@ button.fav-active { background: linear-gradient(135deg, #ffb400, #e69500); color
 .asset-input:focus { border-color: #22d3ee; }
 .asset-select { background: #111836; border: 1px solid #2a3a6e; color: #e0e6ff; border-radius: 6px; padding: 5px 6px; font-size: 12px; outline: none; min-height: 32px; }
 .asset-select:focus { border-color: #22d3ee; }
+
+/* ================= 账号管理 ================= */
+.header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+#accountBadge { background: linear-gradient(135deg, #16204a, #1a2a5a); color: #e0e6ff; border: 1px solid #2a3a6a; border-radius: 20px; padding: 5px 14px; font-size: 12px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+#accountBadge:hover { border-color: #00d4ff; }
+#accountIcon { font-size: 14px; }
+#accountLabel { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal-box { background: #111836; border: 1px solid #2a3a6a; border-radius: 12px; width: 520px; max-width: 94vw; height: 560px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #1e2d5a; color: #00d4ff; font-size: 14px; }
+#accountFrame { flex: 1; width: 100%; border: none; background: #0a0e27; }
+.modal-close { background: rgba(255,255,255,.08); color: #8ea0c8; border: 1px solid #2a3a6a; border-radius: 50%; width: 26px; height: 26px; padding: 0; font-size: 13px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.modal-close:hover { background: #ff4646; border-color: #ff4646; color: #fff; box-shadow: none; transform: none; }
 
 /* ================= 移动端适配 ================= */
 @media (max-width: 768px) {

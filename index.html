@@ -13,6 +13,12 @@
     <h1>📈 A股分析工具</h1>
     <div class="subtitle">实时行情 · 四维评分 · 条件筛选</div>
   </div>
+  <div class="header-right">
+    <button id="accountBadge" onclick="openAccountModal()" title="点击管理账号">
+      <span id="accountIcon">👤</span>
+      <span id="accountLabel">未登录</span>
+    </button>
+  </div>
 </div>
 
 <div class="container">
@@ -156,6 +162,17 @@
 
 </div>
 
+<!-- 账号管理弹窗（功能在 account.html 中实现，此处仅嵌入引用） -->
+<div id="accountModal" class="modal" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-header">
+      <b>👤 账号管理</b>
+      <button type="button" class="modal-close" onclick="closeAccountModal()" title="关闭">✕</button>
+    </div>
+    <iframe id="accountFrame" src="account.html" title="账号管理"></iframe>
+  </div>
+</div>
+
 <script src="./js/app.js"></script>
 <script>
 // ============ 回车快捷键 ============
@@ -164,6 +181,7 @@ document.getElementById('stockCode').addEventListener('keypress', function(e) {
 })
 
 // 页面加载时自动加载自选与持股
+refreshAccountBadge()
 loadWatchlist()
 loadHoldings()
 document.getElementById('holdTimeInput').value = holdTimeNow()

@@ -13,6 +13,11 @@ let lastQuoteMap = {}
 let showCleared = false
 let lastAnalyzedCode = null
 
+// 账号体系：交易明细按账号隔离，自选股/行情等不受账号影响
+let accounts = []
+let currentAccount = ''
+let tradeData = {}
+
 // 初始化时转换旧的字符串格式为对象格式
 function initWatchlist() {
   const stored = localStorage.getItem('watchlist')
@@ -40,40 +45,21 @@ function initWatchlist() {
 }
 initWatchlist()
 
-// 交易明细初始化（读取 trades，无则尝试迁移旧版 holdings → 一条买入流水）
-function initTrades() {
-  let stored = null
-  try { stored = localStorage.getItem('trades') } catch (e) { stored = null }
-  if (stored) {
-    try {
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed)) { trades = parsed; return }
-    } catch (e) { /* 继续迁移 */ }
-  }
-  migrateOldHoldings()
+// 本地存储读取辅助
+function readStorage(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback } catch (e) { return fallback }
 }
 
-function migrateOldHoldings() {
-  let old = null
-  try { old = localStorage.getItem('holdings') } catch (e) { old = null }
-  if (!old) return
-  try {
-    const oldArr = JSON.parse(old)
-    if (Array.isArray(oldArr)) {
-      trades = oldArr.map(h => ({
-        id: genTradeId(),
-        code: normalizeCode(h.code),
-        name: h.name || '',
-        type: 'buy',
-        price: h.cost || 0,
-        qty: h.qty || 0,
-        time: h.addedAt || new Date().toISOString()
-      })).filter(t => t.price > 0 && t.qty > 0)
-      saveTrades()
-    }
-  } catch (e) { /* 忽略旧数据 */ }
+// 账号与交易数据初始化：交易明细按账号隔离存储
+// accounts=[{account,broker}]  currentAccount=账号  tradeData={账号:[流水]}
+// 旧版全局 trades/holdings 在 account.html 首次添加账号时迁移到该账号下
+function initAccountData() {
+  accounts = readStorage('accounts', [])
+  currentAccount = readStorage('currentAccount', '')
+  tradeData = readStorage('tradeData', {})
+  trades = (currentAccount && tradeData[currentAccount]) ? tradeData[currentAccount] : []
 }
-initTrades()
+initAccountData()
 
 // ============ 工具函数 ============
 function showLoading(el) { el.innerHTML = '<span class="loading"></span>分析中...' }
@@ -1042,8 +1028,77 @@ function holdTimeNow() {
 }
 
 function saveTrades() {
-  localStorage.setItem('trades', JSON.stringify(trades))
+  if (!currentAccount) return
+  tradeData[currentAccount] = trades
+  localStorage.setItem('tradeData', JSON.stringify(tradeData))
 }
+
+// ============ 账号管理（与 account.html 弹窗联动） ============
+function isLoggedIn() { return !!currentAccount }
+
+function requireLogin() {
+  if (!isLoggedIn()) { alert('请先登录账号后再操作'); return false }
+  return true
+}
+
+// 从本地存储同步账号状态（account.html 变更后调用）
+function syncAccountFromStorage() {
+  currentAccount = readStorage('currentAccount', '')
+  tradeData = readStorage('tradeData', {})
+  accounts = readStorage('accounts', [])
+  trades = (currentAccount && tradeData[currentAccount]) ? tradeData[currentAccount] : []
+}
+
+// 顶部账号区域显示：账户图标 账号(证券公司) | 账户图标 未登录
+function refreshAccountBadge() {
+  const badge = document.getElementById('accountLabel')
+  const icon = document.getElementById('accountIcon')
+  if (!badge) return
+  if (currentAccount) {
+    const acc = accounts.find(a => a.account === currentAccount)
+    const broker = acc ? acc.broker : ''
+    if (icon) icon.textContent = '👤'
+    badge.textContent = broker ? `${currentAccount}(${broker})` : currentAccount
+    badge.title = `当前账号：${currentAccount}（${broker || '未知券商'}）`
+  } else {
+    if (icon) icon.textContent = '👤'
+    badge.textContent = '未登录'
+    badge.title = '点击管理账号'
+  }
+}
+
+function openAccountModal() {
+  const m = document.getElementById('accountModal')
+  if (m) m.style.display = 'flex'
+}
+
+function closeAccountModal() {
+  const m = document.getElementById('accountModal')
+  if (m) m.style.display = 'none'
+}
+
+// Esc 键取消关闭账号弹窗
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeAccountModal()
+})
+
+// account.html 变更账号后通过 postMessage 通知父页面全局刷新
+function handleAccountMessage(e) {
+  const d = e && e.data
+  if (!d || typeof d !== 'object' || !d.type) return
+  syncAccountFromStorage()
+  expandedTradeCodes = []
+  refreshAccountBadge()
+  if (d.type === 'accountSelected' || d.type === 'accountChanged') {
+    loadHoldings()
+    loadAssetAnalysis()
+    if (currentChartCode) {
+      const active = document.querySelector('#chartCard .chart-tab.active')
+      if (active) loadChart(active.dataset.period)
+    }
+  }
+}
+window.addEventListener('message', handleAccountMessage)
 
 function fmtTradeTime(iso) {
   if (!iso) return ''
@@ -1055,6 +1110,7 @@ function fmtTradeTime(iso) {
 
 // 添加交易流水（永远新增，不修改历史流水）
 async function addTrade() {
+  if (!requireLogin()) return
   const raw = document.getElementById('holdStockInput').value.trim()
   const type = document.getElementById('holdTypeInput').value
   const price = parseFloat(document.getElementById('holdCostInput').value)
@@ -1173,6 +1229,12 @@ function calcCost(trades) {
 function renderHoldings(quoteMap = {}) {
   const resultEl = document.getElementById('holdingsResult')
   resultEl.style.display = 'block'
+  if (!isLoggedIn()) {
+    resultEl.innerHTML = `
+      <div style="margin-bottom:14px;"><button onclick="openAccountModal()">🔑 快速登录</button></div>
+      <div style="color:#6a7a9e;">🔒 当前未登录，请先登录账号后再查看持仓数据。</div>`
+    return
+  }
 
   const groups = {}
   trades.forEach(t => {
@@ -1361,6 +1423,7 @@ function toggleTrades(code) {
 
 // 汇总表"交易"按钮：填入代码，股价默认现价，数量置空，交易方式默认卖出
 function fillTradeFromHolding(code) {
+  if (!requireLogin()) return
   const bare = bareCode(code)
   const q = lastQuoteMap[bare] || {}
   document.getElementById('holdStockInput').value = bare
@@ -1431,6 +1494,7 @@ function clearHoldInput() {
 
 // 从自选股填入持仓输入框（股票代码 + 买入方式 + 现价），并滚动到持仓区域
 function fillHoldingFromWatchlist(code, name, price) {
+  if (!requireLogin()) return
   document.getElementById('holdStockInput').value = bareCode(code)
   document.getElementById('holdTypeInput').value = 'buy'
   document.getElementById('holdCostInput').value = price > 0 ? price : ''
@@ -1499,13 +1563,14 @@ function switchAssetType(type) {
 }
 
 // 构建每只股票逐日盈亏（基于持仓管理的盈亏计算逻辑）
-async function buildDailyData() {
-  const codes = [...new Set(trades.map(t => normalizeCode(t.code)))].filter(Boolean)
+async function buildDailyData(tradeList) {
+  tradeList = tradeList || trades
+  const codes = [...new Set(tradeList.map(t => normalizeCode(t.code)))].filter(Boolean)
   const stocks = []
   
   // 先收集所有交易日期
   const tradeDateSet = new Set()
-  trades.forEach(t => {
+  tradeList.forEach(t => {
     const d = String(t.time).slice(0, 10)
     tradeDateSet.add(d)
   })
@@ -1521,13 +1586,13 @@ async function buildDailyData() {
   
   for (const c of codes) {
     const bare = bareCode(c)
-    const st = { code: bare, name: (trades.find(t => bareCode(t.code) === bare) || {}).name || bare, closes: {}, orders: {}, dayPnl: {}, hold: {} }
+    const st = { code: bare, name: (tradeList.find(t => bareCode(t.code) === bare) || {}).name || bare, closes: {}, orders: {}, dayPnl: {}, hold: {} }
     
     // 初始化交易明细
     tradeDetails[bare] = []
     
     // 先收集交易明细（用于后续计算）
-    trades.filter(t => bareCode(t.code) === bare).forEach(t => {
+    tradeList.filter(t => bareCode(t.code) === bare).forEach(t => {
       const d = String(t.time).slice(0, 10)
       // 只记录从最早交易日期开始的交易
       if (firstTradeDate && d < firstTradeDate) return
@@ -1974,6 +2039,11 @@ function renderAssetAnalysis() {
   const resultEl = document.getElementById('assetResult')
   const msgEl = document.getElementById('assetMsg')
   document.querySelectorAll('#assetCard [data-type]').forEach(b => b.classList.toggle('active', b.dataset.type === assetType))
+  if (!isLoggedIn()) {
+    msgEl.innerHTML = '<div class="success-msg">🔒 当前未登录，请先点击右上角账号区域选择/添加账号后再查看资产统计</div>'
+    resultEl.style.display = 'none'
+    return
+  }
   if (!trades.length) {
     msgEl.innerHTML = '<div class="success-msg">暂无交易明细，请先到「持仓管理」录入交易后再统计</div>'
     resultEl.style.display = 'none'
@@ -2110,7 +2180,7 @@ async function loadAssetAnalysis() {
   const msgEl = document.getElementById('assetMsg')
   msgEl.innerHTML = '<span class="loading"></span>统计中...'
   try {
-    assetAllData = await buildDailyData()
+    assetAllData = await buildDailyData(trades)
     renderAssetAnalysis()
     msgEl.innerHTML = ''
   } catch (e) {
