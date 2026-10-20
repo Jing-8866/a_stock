@@ -31,6 +31,15 @@
   <input type="file" id="file" accept=".json" style="display:none">
 </p>
 
+<p style="margin-top:8px;">
+  <label>导入模式：</label>
+  <select id="importMode">
+    <option value="overwrite">覆盖导入（先清空本地再导入）</option>
+    <option value="add">仅新增（本地已有的键不修改）</option>
+    <option value="merge" selected>增量Merge（保留本地，导入值按对象深合并/同键覆盖）</option>
+  </select>
+</p>
+
 <h3>当前可操作 origin：<code id="cur"></code></h3>
 <pre id="view"></pre>
 
@@ -116,12 +125,118 @@ document.getElementById('file').addEventListener('change',e=>{
   r.onload=ev=>{
     try{
       const obj=JSON.parse(ev.target.result);
-      Object.entries(obj).forEach(([k,v])=>localStorage.setItem(k,typeof v==='string'?v:JSON.stringify(v)));
-      alert('导入完成'); refresh();
+      const mode = document.getElementById('importMode').value;
+
+      // 覆盖模式风险提示
+      if(mode==='overwrite' && !confirm('覆盖导入将先清空当前域全部 localStorage 再写入导入文件内容，不可撤销。确定继续？')) {
+        e.target.value=''; refresh(); return;
+      }
+
+      const stat = doImport(obj, mode);
+      alert('导入完成（'+mode+'）：新增 '+stat.added+' 条，更新 '+stat.updated+' 条，跳过 '+stat.skipped+' 条'
+        + (stat.cleared ? '，已清空 '+stat.cleared+' 条原数据' : ''));
+      refresh();
     }catch(err){alert('导入失败：'+err.message)}
+    e.target.value='';
   };
   r.readAsText(f,'utf-8');
 });
+
+function normVal(v){
+  // 字符串原样，对象/数组序列化
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+
+function deepMergeValue(lv, iv){
+  // 递归深合并：仅当两侧均为纯对象时逐键合并，其余情况用导入值覆盖
+  if(lv && iv && typeof lv==='object' && typeof iv==='object' && !Array.isArray(lv) && !Array.isArray(iv)){
+    const r = Object.assign({}, lv);
+    Object.keys(iv).forEach(k=>{ r[k] = deepMergeValue(lv[k], iv[k]); });
+    return r;
+  }
+  return iv;
+}
+
+function mergeStr(key, localStr, importStr){
+  // 两侧都是JSON纯对象时深合并；业务数组按键合并；其余情况用导入值
+  let l=null, imp=null;
+  try{ l = JSON.parse(localStr); }catch(e){ l=null; }
+  try{ imp = JSON.parse(importStr); }catch(e){ imp=null; }
+  const lObj = l && typeof l==='object' && !Array.isArray(l);
+  const iObj = imp && typeof imp==='object' && !Array.isArray(imp);
+  if(lObj && iObj){
+    const merged = deepMergeValue(l, imp);
+    return JSON.stringify(merged);
+  }
+  const idField = BUSINESS_KEYS[key] || '';
+  if(idField && Array.isArray(l) && Array.isArray(imp)){
+    return JSON.stringify(mergeBusinessArr(l, imp, idField));
+  }
+  return importStr; // 字符串或普通值直接用导入的
+}
+
+// 业务数组按主键合并：相同主键取导入值并保留本地额外字段，本地独有保留，导入新增追加
+function mergeBusinessArr(localArr, importArr, idField){
+  const out = [];
+  const seen = new Set();
+  const push = x => { out.push(x); };
+  localArr.forEach(x=>{
+    if(x && typeof x==='object' && idField in x){
+      if(!seen.has(x[idField])){ seen.add(x[idField]); push(Object.assign({}, x)); }
+    } else {
+      const k = 'r:' + JSON.stringify(x);
+      if(!seen.has(k)){ seen.add(k); push(x); }
+    }
+  });
+  importArr.forEach(x=>{
+    if(x && typeof x==='object' && idField in x){
+      if(!seen.has(x[idField])){
+        seen.add(x[idField]); push(Object.assign({}, x));
+      } else {
+        const i = out.findIndex(o => o && typeof o==='object' && o[idField]===x[idField]);
+        if(i>=0) out[i] = Object.assign({}, out[i], x);
+      }
+    } else {
+      const k = 'r:' + JSON.stringify(x);
+      if(!seen.has(k)){ seen.add(k); push(x); }
+    }
+  });
+  return out;
+}
+
+const BUSINESS_KEYS = {
+  accounts: 'account',
+  watchlist: 'code',
+  holdings: 'code'
+};
+
+function doImport(obj, mode){
+  const stat = { added:0, updated:0, skipped:0, cleared:0 };
+  if(mode === 'overwrite'){
+    // 先清空现有全部
+    for(let i=localStorage.length-1;i>=0;i--){ localStorage.removeItem(localStorage.key(i)); stat.cleared++; }
+    Object.keys(obj).forEach(k=>{
+      localStorage.setItem(k, normVal(obj[k]));
+      stat.added++;
+    });
+    return stat;
+  }
+  // add / merge
+  Object.keys(obj).forEach(k=>{
+    const cur = localStorage.getItem(k);
+    if(cur === null){
+      localStorage.setItem(k, normVal(obj[k]));
+      stat.added++;
+    } else if(mode === 'merge'){
+      const merged = mergeStr(k, cur, normVal(obj[k]));
+      if(merged !== cur){ localStorage.setItem(k, merged); stat.updated++; }
+      else { stat.skipped++; }
+    } else { // add：本地已有键不修改
+      stat.skipped++;
+    }
+  });
+  return stat;
+}
 
 document.getElementById('origin').addEventListener('input', checkSame);
 checkSame(); refresh();
