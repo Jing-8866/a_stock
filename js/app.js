@@ -1962,7 +1962,7 @@ function renderDayCalendar(el, year, month, all) {
         all.stocks.forEach(st => { pnl += st.dayPnl[s] || 0 })
         cells.push(`<td style="border:1px solid #24325f;padding:5px;text-align:center;background:#111836;">
           <div style="font-size:13px;color:#e0e6ff;">${dd}</div>
-          <div style="font-size:10px;color:${pnl >= 0 ? '#ff4646' : '#00c864'};">${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}</div>
+          <div style="font-size:10px;color:${pnl > 0 ? '#ff4646' : (pnl < 0 ? '#00c864' : '#8ea0c8')};">${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}</div>
         </td>`)
       } else {
         cells.push('<td style="border:1px solid #24325f;padding:5px;background:#0a0e27;"></td>')
@@ -1996,7 +1996,7 @@ function renderWeekCalendar(el, monday, all) {
     all.stocks.forEach(st => { pnl += st.dayPnl[s] || 0 })
     cells.push(`<td style="border:1px solid #24325f;padding:5px;text-align:center;background:#111836;width:20%;">
       <div style="font-size:13px;color:#e0e6ff;">${d.getDate()}</div>
-      <div style="font-size:10px;color:${pnl >= 0 ? '#ff4646' : '#00c864'};">${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}</div>
+      <div style="font-size:10px;color:${pnl > 0 ? '#ff4646' : (pnl < 0 ? '#00c864' : '#8ea0c8')};">${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}</div>
     </td>`)
   }
   el.innerHTML = `
@@ -2030,7 +2030,7 @@ function renderYearCalendar(el, year, all, title) {
       ${monthRows.map(r => `
         <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;text-align:center;">
           <div style="font-size:12px;color:#6a7a9e;">${r.m} 月</div>
-          <div style="font-size:15px;color:${r.v >= 0 ? '#ff4646' : '#00c864'};">${r.v >= 0 ? '+' : ''}${formatNumber(r.v, 2)}</div>
+          <div style="font-size:15px;color:${r.v > 0 ? '#ff4646' : (r.v < 0 ? '#00c864' : '#8ea0c8')};">${r.v > 0 ? '+' : ''}${formatNumber(r.v, 2)}</div>
         </div>`).join('')}
     </div>`
 }
@@ -2293,7 +2293,7 @@ function buildAllViewHtml(yearly, years, view, selYear) {
       <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;overflow:hidden;margin-bottom:8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #1e2d5a;cursor:pointer;" onclick="toggleYearCalendar('${y}')">
           <div style="color:#e0e6ff;">${y} 年 ${y === years[years.length - 1] ? `<span style="color:#6a7a9e;font-size:11px;"></span>` : ''}</div>
-          <div style="color:${yearTotal >= 0 ? '#ff4646' : '#00c864'};font-size:13px;">${yearTotal >= 0 ? '+' : ''}${formatNumber(yearTotal, 2)}</div>
+          <div style="color:${yearTotal > 0 ? '#ff4646' : (yearTotal < 0 ? '#00c864' : '#8ea0c8')};font-size:13px;">${yearTotal > 0 ? '+' : ''}${formatNumber(yearTotal, 2)}</div>
           <span id="icon-${y}" style="color:#6a7a9e;">▼</span>
         </div>
         <div id="calendar-${y}" style="display:none;">
@@ -2301,7 +2301,7 @@ function buildAllViewHtml(yearly, years, view, selYear) {
             ${Array.from({ length: 12 }, (_, i) => i + 1).map(m => `
               <div style="background:#16204a;border:1px solid #24325f;border-radius:6px;padding:8px;text-align:center;">
                 <div style="font-size:12px;color:#6a7a9e;">${m}月</div>
-                <div style="font-size:13px;color:${(months[m] || 0) >= 0 ? '#ff4646' : '#00c864'};">${(months[m] || 0) >= 0 ? '+' : ''}${formatNumber(months[m] || 0, 2)}</div>
+                <div style="font-size:13px;color:${(months[m] || 0) > 0 ? '#ff4646' : ((months[m] || 0) < 0 ? '#00c864' : '#8ea0c8')};">${(months[m] || 0) > 0 ? '+' : ''}${formatNumber(months[m] || 0, 2)}</div>
               </div>
             `).join('')}
           </div>
