@@ -704,6 +704,36 @@ function toSecid(code) {
   return code
 }
 
+/** 东财 K 线（腾讯 fqkline 不可用时的降级源）
+ * secid: sh600519 / sz000001 / bj430047
+ * period: day | week | month
+ * 返回 [{ date, open, close, high, low, volume }]
+ */
+async function emFetchKline(secid, period, count) {
+  const s = String(secid || '').toLowerCase()
+  let emSecid = ''
+  if (s.startsWith('sh')) emSecid = '1.' + s.slice(2)
+  else if (s.startsWith('sz') || s.startsWith('bj')) emSecid = '0.' + s.slice(2)
+  else if (/^\d{6}$/.test(s)) emSecid = (s.startsWith('6') ? '1.' : '0.') + s
+  if (!emSecid) return []
+  const klt = period === 'week' ? 102 : (period === 'month' ? 103 : 101)
+  const lmt = Math.max(1, Math.min(1000, parseInt(count) || 320))
+  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${emSecid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&end=20500101&lmt=${lmt}`
+  const data = await emFetchJson(url)
+  const lines = (data && data.data && data.data.klines) || []
+  return lines.map(line => {
+    const p = String(line).split(',')
+    return {
+      date: p[0] || '',
+      open: parseFloat(p[1]) || null,
+      close: parseFloat(p[2]) || null,
+      high: parseFloat(p[3]) || null,
+      low: parseFloat(p[4]) || null,
+      volume: parseFloat(p[5]) || null
+    }
+  }).filter(k => k.close !== null && k.close > 0)
+}
+
 /** 新浪分时（优先，时间字段明确）→ 返回 [{time:"09:30", price, volume}] */
 async function sinaMinute(secid) {
   const url = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_=/CN_MarketDataService.getMinLine2Data?symbol=${secid}`
@@ -811,18 +841,25 @@ app.get('/api/kline/:code', async (req, res) => {
     }
 
     const pf = period === 'week' ? 'week' : period === 'month' ? 'month' : 'day'
-    const text = await fetchUrl(`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${secid},${pf},,,${count},qfq`)
-    const json = JSON.parse(text)
-    const d = json && json.data && json.data[secid]
-    const rows = d ? (d['qfq' + pf] || d[pf] || []) : []
-    const klines = (rows || []).map(r => ({
-      date: String(r[0] || ''),
-      open: parseFloat(r[1]) || null,
-      close: parseFloat(r[2]) || null,
-      high: parseFloat(r[3]) || null,
-      low: parseFloat(r[4]) || null,
-      volume: parseFloat(r[5]) || null
-    })).filter(k => k.close !== null && k.close > 0)
+    let klines = []
+    // 优先腾讯 fqkline，失败（如 HTTP 501 接口废弃）降级东财
+    try {
+      const text = await fetchUrl(`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${secid},${pf},,,${count},qfq`)
+      const json = JSON.parse(text)
+      const d = json && json.data && json.data[secid]
+      const rows = d ? (d['qfq' + pf] || d[pf] || []) : []
+      klines = (rows || []).map(r => ({
+        date: String(r[0] || ''),
+        open: parseFloat(r[1]) || null,
+        close: parseFloat(r[2]) || null,
+        high: parseFloat(r[3]) || null,
+        low: parseFloat(r[4]) || null,
+        volume: parseFloat(r[5]) || null
+      })).filter(k => k.close !== null && k.close > 0)
+    } catch (e) { /* 腾讯失败，降级东财 */ }
+    if (!klines.length) {
+      klines = await emFetchKline(secid, pf, count)
+    }
     res.json({ code: secid, period: pf, klines })
   } catch (e) {
     res.status(500).json({ error: e.message, points: [], klines: [] })
