@@ -9,6 +9,7 @@ const API = 'http://localhost:7373/api'
 let watchlist = []
 let trades = []
 let expandedTradeCodes = []
+let editTradeId = null // 当前正在编辑的交易ID
 let lastQuoteMap = {}
 let showCleared = false
 let lastAnalyzedCode = null
@@ -275,7 +276,9 @@ async function loadChart(period) {
   container.innerHTML = ''
   try {
     const apiPeriod = period === 'day5' ? 'day' : period
+    // 五日图需要5个交易日的分时数据，日K/周K/月K请求320条
     const count = period === 'day5' ? 5 : (period === 'minute' ? 1 : 320)
+    // 单股分析走势图：不受资产分析期间限制，直接获取任意股票的K线数据
     const apiUrl = `${API}/kline/${currentChartCode}?period=${apiPeriod}&count=${count}`
     console.log('API请求:', apiUrl) // 调试日志
     const res = await fetch(apiUrl)
@@ -298,10 +301,10 @@ async function loadChart(period) {
         const active = document.querySelector('#chartCard .chart-tab.active')
         if (active && active.dataset.period === 'minute' && currentChartCode) loadChart('minute')
       }, 30000)
-    } else if (data.klines) {
+    } else if (data.klines && data.klines.length > 0) {
       renderLineChart(container, data.klines.map(k => ({ x: k.date, y: k.close, close: k.close, open: k.open, high: k.high, low: k.low })), { period: apiPeriod })
     } else {
-      msgEl.innerHTML = '<div class="error-msg">未获取到走势数据</div>'
+      msgEl.innerHTML = '<div class="error-msg">暂无走势数据，可能该股票已停牌或数据源暂时不可用</div>'
     }
   } catch (e) {
     console.error('加载走势图错误详情:', e) // 调试日志
@@ -1015,7 +1018,7 @@ function clearWatchlist() {
 }
 
 // ============ 持仓管理（基于交易明细汇总） ============
-// 交易流水：{ id, code, name, type:'buy'|'sell', price, qty, time }
+// 交易流水：{ id, code, name, type:'buy'|'sell', price, qty, fee, time }
 function genTradeId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
@@ -1047,6 +1050,24 @@ function syncAccountFromStorage() {
   tradeData = readStorage('tradeData', {})
   accounts = readStorage('accounts', [])
   trades = (currentAccount && tradeData[currentAccount]) ? tradeData[currentAccount] : []
+  
+  // 兼容旧数据：为每笔交易计算并添加 amount 和 actualAmount 字段
+  trades.forEach(t => {
+    if (!t.amount || !t.actualAmount) {
+      const amount = t.price * t.qty
+      t.amount = amount
+      t.actualAmount = t.type === 'buy' ? amount + (t.fee || 0) : amount - (t.fee || 0)
+    }
+  })
+  
+  // 保存更新后的数据
+  if (currentAccount && tradeData[currentAccount]) {
+    tradeData[currentAccount] = trades
+    localStorage.setItem('tradeData', JSON.stringify(tradeData))
+  }
+  
+  // 重置编辑状态
+  editTradeId = null
 }
 
 // 顶部账号区域显示：账户图标 账号(证券公司) | 账户图标 未登录
@@ -1108,6 +1129,63 @@ function fmtTradeTime(iso) {
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+// 计算交易金额和发生金额
+function calcTradeAmount(type, price, qty, fee) {
+  const amount = price * qty
+  const actualAmount = type === 'buy' ? amount + fee : amount - fee
+  return { amount, actualAmount }
+}
+
+// 渲染单笔交易行（支持编辑模式）
+function renderTradeRow(t, editMode = false) {
+  // 交易金额 = 交易股价 × 交易数量
+  // 发生金额 = 买入时(交易金额 + 费用) / 卖出时(交易金额 - 费用)
+  const amount = t.price * t.qty
+  const actualAmount = t.type === 'buy' ? amount + (t.fee || 0) : amount - (t.fee || 0)
+  const fee = t.fee || 0
+  
+  // 格式化交易时间为 datetime-local 格式
+  const tradeTimeValue = () => {
+    if (!t.time) return ''
+    const d = new Date(t.time)
+    if (isNaN(d.getTime())) return ''
+    const p = n => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  }
+  
+  if (editMode) {
+    return `
+                  <tr class="trade-edit-row" data-id="${t.id}">
+                    <td><input type="datetime-local" class="edit-time" value="${tradeTimeValue()}" step="1" style="width:170px;background:#111836;border:1px solid #2a3a6a;color:#e0e0e0;padding:4px 6px;border-radius:4px;" /></td>
+                    <td style="color:${t.type==='buy'?'#ff4646':'#00c864'};">${t.type==='buy'?'买入':'卖出'}</td>
+                    <td><input type="number" class="edit-price" value="${t.price}" step="0.01" style="width:80px;background:#111836;border:1px solid #2a3a6a;color:#e0e0e0;padding:4px 6px;border-radius:4px;" /></td>
+                    <td><input type="number" class="edit-qty" value="${t.qty}" step="1" style="width:70px;background:#111836;border:1px solid #2a3a6a;color:#e0e0e0;padding:4px 6px;border-radius:4px;" /></td>
+                    <td><input type="number" class="edit-fee" value="${fee}" step="0.01" style="width:70px;background:#111836;border:1px solid #2a3a6a;color:#e0e0e0;padding:4px 6px;border-radius:4px;" /></td>
+                    <td><span class="trade-amount">${formatNumber(amount, 2)}</span></td>
+                    <td><span class="actual-amount">${formatNumber(actualAmount, 2)}</span></td>
+                    <td>
+                      <button class="secondary" style="padding:2px 6px;font-size:11px;" onclick="saveTradeEdit('${t.id}')">提交</button>
+                      <button class="danger" style="padding:2px 6px;font-size:11px;" onclick="removeTrade('${t.id}')">删</button>
+                    </td>
+                  </tr>`
+  }
+  
+  return `
+                  <tr class="trade-row" data-id="${t.id}">
+                    <td><span style="color:#6a7a9e;">${fmtTradeTime(t.time)}</span></td>
+                    <td style="color:${t.type==='buy'?'#ff4646':'#00c864'};">${t.type==='buy'?'买入':'卖出'}</td>
+                    <td>${formatNumber(t.price, 3)}</td>
+                    <td>${t.qty}</td>
+                    <td>${formatNumber(fee, 2)}</td>
+                    <td>${formatNumber(amount, 2)}</td>
+                    <td>${formatNumber(actualAmount, 2)}</td>
+                    <td>
+                      <button class="secondary" style="padding:2px 6px;font-size:11px;" onclick="editTrade('${t.id}')">修改</button>
+                      <button class="danger" style="padding:2px 6px;font-size:11px;" onclick="removeTrade('${t.id}')">删</button>
+                    </td>
+                  </tr>`
+}
+
 // 添加交易流水（永远新增，不修改历史流水）
 async function addTrade() {
   if (!requireLogin()) return
@@ -1115,6 +1193,7 @@ async function addTrade() {
   const type = document.getElementById('holdTypeInput').value
   const price = parseFloat(document.getElementById('holdCostInput').value)
   const qty = parseInt(document.getElementById('holdQtyInput').value)
+  const fee = parseFloat(document.getElementById('holdFeeInput').value) || 0
 
   if (!raw) { alert('请输入股票代码或名称'); return }
   if (isNaN(price) || price <= 0) { alert('请输入有效的交易股价'); return }
@@ -1161,6 +1240,11 @@ async function addTrade() {
     if (data.error) throw new Error(data.error)
     const timeInput = document.getElementById('holdTimeInput').value
     const tradeTime = timeInput ? new Date(timeInput).toISOString() : new Date().toISOString()
+    
+    // 计算交易金额和发生金额
+    const amount = price * qty
+    const actualAmount = type === 'buy' ? amount + fee : amount - fee
+    
     trades.push({
       id: genTradeId(),
       code: normalizeCode(data.code),
@@ -1168,6 +1252,9 @@ async function addTrade() {
       type: type,
       price: price,
       qty: qty,
+      fee: fee,
+      amount: amount,
+      actualAmount: actualAmount,
       time: tradeTime
     })
     saveTrades()
@@ -1175,6 +1262,7 @@ async function addTrade() {
     document.getElementById('holdStockInput').value = ''
     document.getElementById('holdCostInput').value = ''
     document.getElementById('holdQtyInput').value = ''
+    document.getElementById('holdFeeInput').value = ''
     document.getElementById('holdTimeInput').value = holdTimeNow()
     document.getElementById('holdStockHint').textContent = ''
     loadHoldings()
@@ -1200,29 +1288,39 @@ function isToday(iso) {
 
 // 按交易时间先进先出（FIFO）计算持仓成本
 // 每笔买入作为一个批次记录，卖出时优先扣减最早买入的批次
-// 成本价 = 剩余（未卖出的最早批次）批次的加权平均价
+// 成本价 = 剩余（未卖出的最早批次）批次的加权平均价（使用发生金额）
 function calcCost(trades) {
   const lots = []
   trades.slice().sort((a, b) => new Date(a.time) - new Date(b.time)).forEach(t => {
+    const fee = t.fee || 0
+    // 使用存储的 actualAmount 字段计算批次成本
+    const actualAmount = t.actualAmount || (t.type === 'buy' ? t.price * t.qty + fee : t.price * t.qty - fee)
+    
     if (t.type === 'sell') {
       let remain = t.qty
       while (remain > 0 && lots.length) {
         const head = lots[0]
         if (head.qty <= remain) {
+          // 完全卖出该批次：移除整个批次
           remain -= head.qty
           lots.shift()
         } else {
+          // 部分卖出：按比例扣减数量和成本
+          const sellRatio = remain / head.qty
+          head.cost = head.cost * (1 - sellRatio) // 按比例扣减成本
           head.qty -= remain
           remain = 0
         }
       }
     } else {
-      lots.push({ qty: t.qty, price: t.price })
+      // 使用发生金额（交易金额 + 费用）计算批次成本
+      lots.push({ qty: t.qty, cost: actualAmount })
     }
   })
   const totalQty = lots.reduce((s, l) => s + l.qty, 0)
   if (!totalQty) return 0
-  return lots.reduce((s, l) => s + l.qty * l.price, 0) / totalQty
+  const totalCost = lots.reduce((s, l) => s + l.cost, 0)
+  return totalCost / totalQty
 }
 
 // 渲染持仓汇总表（由交易明细动态汇总）及可展开的明细表
@@ -1239,14 +1337,28 @@ function renderHoldings(quoteMap = {}) {
   const groups = {}
   trades.forEach(t => {
     const bare = bareCode(t.code)
+    // 使用存储的 amount 和 actualAmount 字段
+    const amount = t.amount || (t.price * t.qty)
+    const actualAmount = t.actualAmount || (t.type === 'buy' ? amount + (t.fee || 0) : amount - (t.fee || 0))
     if (!groups[bare]) groups[bare] = { code: t.code, name: t.name, buyQty: 0, buyAmt: 0, sellQty: 0, sellAmt: 0, todayBuyQty: 0, todayBuyAmt: 0, todaySellQty: 0, todaySellAmt: 0, trades: [], latestTime: '' }
     const g = groups[bare]
     if (!g.latestTime || new Date(t.time) > new Date(g.latestTime)) g.latestTime = t.time
-    if (t.type === 'sell') { g.sellQty += t.qty; g.sellAmt += t.qty * t.price }
-    else { g.buyQty += t.qty; g.buyAmt += t.qty * t.price }
+    // 使用存储的发生金额
+    if (t.type === 'sell') { 
+      g.sellQty += t.qty 
+      g.sellAmt += actualAmount 
+    } else { 
+      g.buyQty += t.qty 
+      g.buyAmt += actualAmount 
+    }
     if (isToday(t.time)) {
-      if (t.type === 'sell') { g.todaySellQty += t.qty; g.todaySellAmt += t.qty * t.price }
-      else { g.todayBuyQty += t.qty; g.todayBuyAmt += t.qty * t.price }
+      if (t.type === 'sell') { 
+        g.todaySellQty += t.qty 
+        g.todaySellAmt += actualAmount 
+      } else { 
+        g.todayBuyQty += t.qty 
+        g.todayBuyAmt += actualAmount 
+      }
     }
     g.trades.push(t)
   })
@@ -1300,7 +1412,7 @@ function renderHoldings(quoteMap = {}) {
     return
   }
 
-  let totalCost = 0, totalValue = 0, totalProfit = 0, totalDayProfit = 0, totalSellAmt = 0
+  let totalCost = 0, totalValue = 0, totalProfit = 0, totalDayProfit = 0, totalSellAmt = 0, totalFee = 0
   list.forEach(s => {
     totalCost += s.buyAmt
     totalValue += s.price * s.qty
@@ -1308,6 +1420,8 @@ function renderHoldings(quoteMap = {}) {
     totalDayProfit += s.dayProfit
     totalSellAmt += s.sellAmt
   })
+  // 计算总费用（所有交易明细）
+  totalFee = trades.reduce((sum, t) => sum + (t.fee || 0), 0)
   const holdPct = totalCost > 0 ? totalProfit / totalCost * 100 : 0
   const dayPct = totalCost > 0 ? totalDayProfit / totalCost * 100 : 0
 
@@ -1316,6 +1430,7 @@ function renderHoldings(quoteMap = {}) {
       <span class="tag tag-info">总市值 ${formatNumber(totalValue, 2)}</span>
       <span class="tag tag-info">总投入 ${formatNumber(totalCost, 2)}</span>
       <span class="tag tag-info">总卖出 ${formatNumber(totalSellAmt, 2)}</span>
+      <span class="tag tag-info">总费用 ${formatNumber(totalFee, 2)}</span>
       <span class="tag ${totalProfit>=0?'tag-sell':'tag-buy'}">持仓收益 ${totalProfit>=0?'+':''}${formatNumber(totalProfit, 2)} (${holdPct>=0?'+':''}${formatNumber(holdPct, 2)}%)</span>
       <span class="tag ${totalDayProfit>=0?'tag-sell':'tag-buy'}">当日盈亏 ${totalDayProfit>=0?'+':''}${formatNumber(totalDayProfit, 2)} (${dayPct>=0?'+':''}${formatNumber(dayPct, 2)}%)</span>
       <label style="font-size:13px;color:#6a7a9e;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="showClearedChk" ${showCleared?'checked':''} onchange="showCleared=this.checked;renderHoldings(lastQuoteMap)">展示已清仓</label>
@@ -1338,17 +1453,9 @@ function renderHoldings(quoteMap = {}) {
               <div style="font-size:12px;color:#6a7a9e;margin-bottom:6px;">📋 ${s.name || ''} (${bare}) 交易明细（${s.trades.length} 条）</div>
               <div style="overflow-x:auto;">
               <table style="font-size:12px;border:1px solid #1e2d5a;">
-                <thead><tr><th>时间</th><th>交易方式</th><th>交易股价</th><th>交易数量</th><th>交易金额</th><th>操作</th></tr></thead>
+                <thead><tr><th>时间</th><th>交易方式</th><th>交易股价</th><th>交易数量</th><th>费用</th><th>交易金额</th><th>发生金额</th><th>操作</th></tr></thead>
                 <tbody>
-                  ${s.trades.slice().sort((a,b)=>new Date(b.time)-new Date(a.time)).map(t => `
-                  <tr>
-                    <td><span style="color:#6a7a9e;">${fmtTradeTime(t.time)}</span></td>
-                    <td style="color:${t.type==='buy'?'#ff4646':'#00c864'};">${t.type==='buy'?'买入':'卖出'}</td>
-                    <td>${formatNumber(t.price, 3)}</td>
-                    <td>${t.qty}</td>
-                    <td>${formatNumber(t.price * t.qty, 2)}</td>
-                    <td><button class="danger" style="padding:2px 8px;font-size:11px;" onclick="removeTrade('${t.id}')">删</button></td>
-                  </tr>`).join('')}
+                  ${s.trades.slice().sort((a,b)=>new Date(b.time)-new Date(a.time)).map(t => renderTradeRow(t, editTradeId === t.id)).join('')}
                 </tbody>
               </table>
               </div>
@@ -1383,6 +1490,21 @@ function renderHoldings(quoteMap = {}) {
       </table>
     </div>
   `
+  // 动态计算交易金额和发生金额的事件监听
+  setTimeout(() => {
+    resultEl.querySelectorAll('.edit-price, .edit-qty, .edit-fee').forEach(input => {
+      input.addEventListener('input', function() {
+        const row = this.closest('tr')
+        const price = parseFloat(row.querySelector('.edit-price').value) || 0
+        const qty = parseInt(row.querySelector('.edit-qty').value) || 0
+        const fee = parseFloat(row.querySelector('.edit-fee').value) || 0
+        const type = row.querySelector('td:nth-child(2)').innerText.includes('买入') ? 'buy' : 'sell'
+        const { amount, actualAmount } = calcTradeAmount(type, price, qty, fee)
+        row.querySelector('.trade-amount').textContent = formatNumber(amount, 2)
+        row.querySelector('.actual-amount').textContent = formatNumber(actualAmount, 2)
+      })
+    })
+  }, 0)
 }
 
 function switchMainTab(tab) {
@@ -1399,6 +1521,8 @@ function switchMainTab(tab) {
     if (tab === 'analyze' && lastAnalyzedCode) chartCard.style.display = 'block'
     else chartCard.style.display = 'none'
   }
+  // 切换 TAB 时退出编辑状态
+  editTradeId = null
   if (tab === 'watchlist') loadWatchlist()
   if (tab === 'holdings') loadHoldings()
   if (tab === 'asset') {
@@ -1418,6 +1542,8 @@ function toggleTrades(code) {
   const idx = expandedTradeCodes.indexOf(bare)
   if (idx >= 0) expandedTradeCodes = []
   else expandedTradeCodes = [bare]
+  // 切换明细时退出编辑状态
+  editTradeId = null
   renderHoldings(lastQuoteMap)
 }
 
@@ -1430,6 +1556,7 @@ function fillTradeFromHolding(code) {
   document.getElementById('holdTypeInput').value = 'sell'
   document.getElementById('holdCostInput').value = q.price > 0 ? q.price : ''
   document.getElementById('holdQtyInput').value = ''
+  document.getElementById('holdFeeInput').value = ''
   document.getElementById('holdTimeInput').value = holdTimeNow()
   const t = trades.find(t => bareCode(t.code) === bare)
   document.getElementById('holdStockHint').textContent = (t && t.name) ? `${t.name}(${bare})` : ''
@@ -1474,6 +1601,56 @@ function removeTrade(id) {
   loadHoldings()
 }
 
+// 开始编辑交易
+function editTrade(id) {
+  // 如果已经在编辑其他交易，先保存
+  if (editTradeId && editTradeId !== id) {
+    saveTradeEdit(editTradeId)
+  }
+  editTradeId = id === editTradeId ? null : id // 切换编辑状态
+  renderHoldings(lastQuoteMap)
+}
+
+// 保存编辑后的交易
+function saveTradeEdit(id) {
+  if (!id) return
+  const row = document.querySelector('tr.trade-edit-row[data-id="' + id + '"]')
+  if (!row) return
+  
+  const inputs = row.querySelectorAll('input')
+  const newTime = inputs[0].value
+  const newPrice = parseFloat(inputs[1].value)
+  const newQty = parseInt(inputs[2].value)
+  const newFee = parseFloat(inputs[3].value) || 0
+  
+  if (!newTime) { alert('请输入有效的交易时间'); return }
+  if (isNaN(newPrice) || newPrice <= 0) { alert('请输入有效的交易股价'); return }
+  if (isNaN(newQty) || newQty <= 0) { alert('请输入有效的交易数量'); return }
+  
+  // 更新交易数据
+  const trade = trades.find(t => t.id === id)
+  if (trade) {
+    trade.time = new Date(newTime).toISOString()
+    trade.price = newPrice
+    trade.qty = newQty
+    trade.fee = newFee
+    // 重新计算交易金额和发生金额
+    const amount = trade.price * trade.qty
+    trade.amount = amount
+    trade.actualAmount = trade.type === 'buy' ? amount + trade.fee : amount - trade.fee
+    saveTrades()
+  }
+  
+  editTradeId = null
+  renderHoldings(lastQuoteMap)
+}
+
+// 取消编辑
+function cancelTradeEdit(id) {
+  editTradeId = null
+  renderHoldings(lastQuoteMap)
+}
+
 // 删除股票（连同其全部交易明细）
 function removeHolding(code) {
   const bare = bareCode(code)
@@ -1481,6 +1658,7 @@ function removeHolding(code) {
   if (!confirm(`确定删除 ${bare} 的 ${count} 条交易明细？`)) return
   trades = trades.filter(t => bareCode(t.code) !== bare)
   saveTrades()
+  editTradeId = null // 删除持仓时退出编辑状态
   loadHoldings()
 }
 
@@ -1488,6 +1666,7 @@ function clearHoldInput() {
   document.getElementById('holdStockInput').value = ''
   document.getElementById('holdCostInput').value = ''
   document.getElementById('holdQtyInput').value = ''
+  document.getElementById('holdFeeInput').value = ''
   document.getElementById('holdTimeInput').value = holdTimeNow()
   document.getElementById('holdStockHint').textContent = ''
 }
@@ -1499,6 +1678,7 @@ function fillHoldingFromWatchlist(code, name, price) {
   document.getElementById('holdTypeInput').value = 'buy'
   document.getElementById('holdCostInput').value = price > 0 ? price : ''
   document.getElementById('holdQtyInput').value = ''
+  document.getElementById('holdFeeInput').value = ''
   document.getElementById('holdTimeInput').value = holdTimeNow()
   document.getElementById('holdStockHint').textContent = name ? `${name}(${bareCode(code)})` : ''
   switchMainTab('holdings')
@@ -1563,61 +1743,143 @@ function switchAssetType(type) {
 }
 
 // 构建每只股票逐日盈亏（基于持仓管理的盈亏计算逻辑）
+// 优化：先根据期间筛选有持仓的股票，再获取对应的K线数据
 async function buildDailyData(tradeList) {
   tradeList = tradeList || trades
-  const codes = [...new Set(tradeList.map(t => normalizeCode(t.code)))].filter(Boolean)
-  const stocks = []
   
-  // 先收集所有交易日期
+  // 步骤1：先确定统计期间的起止日期
+  const allTradeDates = [...new Set(tradeList.map(t => String(t.time).slice(0, 10)))].sort()
+  const firstTradeDate = allTradeDates[0] || null
+  const lastTradeDate = allTradeDates[allTradeDates.length - 1] || null
+  
+  if (!firstTradeDate) return null
+  
+  // 步骤2：根据当前 assetType 确定需要的日期范围
+  let periodStart = firstTradeDate
+  let periodEnd = lastTradeDate
+  
+  if (assetType === 'day') {
+    periodStart = assetSelDate || dateStr(new Date())
+    periodEnd = periodStart
+  } else if (assetType === 'week') {
+    const anchor = assetSelDate || lastTradeDate
+    const d = new Date(anchor + 'T00:00:00')
+    const dow = d.getDay()
+    const mondayOffset = dow === 0 ? -6 : 1 - dow
+    periodStart = addDays(anchor, mondayOffset)
+    periodEnd = addDays(periodStart, 4)
+  } else if (assetType === 'month') {
+    const anchor = assetSelMonth ? assetSelMonth + '-15' : lastTradeDate
+    periodStart = anchor.slice(0, 7) + '-01'
+    const ly = parseInt(periodStart.slice(0, 4)), lm = parseInt(periodStart.slice(5, 7))
+    const lastDay = new Date(ly, lm, 0).getDate()
+    periodEnd = `${periodStart.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`
+  } else if (assetType === 'year') {
+    const year = assetSelYear || parseInt(lastTradeDate.slice(0, 4))
+    periodStart = `${year}-01-01`
+    periodEnd = `${year}-12-31`
+  } else if (assetType === 'all') {
+    // 历史至今：从最早一笔交易到系统日期今天
+    periodEnd = dateStr(new Date())
+  }
+  
+  // 步骤3：筛选期间内有持仓的股票代码
+  const periodTradeList = tradeList.filter(t => {
+    const d = String(t.time).slice(0, 10)
+    return d >= periodStart && d <= periodEnd
+  })
+  
+  // 收集期间内有持仓的股票代码
+  const codesWithHoldings = new Set()
+  const stockHoldings = {} // 记录每只股票的累计持仓
+  
+  // 按时间顺序计算持仓变化
+  tradeList.slice().sort((a, b) => new Date(a.time) - new Date(b.time)).forEach(t => {
+    const bare = bareCode(t.code)
+    if (!stockHoldings[bare]) stockHoldings[bare] = 0
+    
+    const d = String(t.time).slice(0, 10)
+    
+    // 更新持仓
+    stockHoldings[bare] += t.type === 'sell' ? -t.qty : t.qty
+    
+    // 期间内或期间开始后仍有持仓的股票
+    if (d >= periodStart && d <= periodEnd) {
+      codesWithHoldings.add(bare)
+    }
+  })
+  
+  // 包含期间结束时仍有持仓的股票（即使期间内没有交易）
+  Object.keys(stockHoldings).forEach(bare => {
+    // 期间结束时持仓 > 0，说明期间内有持仓
+    if (stockHoldings[bare] > 0) {
+      // 检查该股票是否在期间内存在（任何交易记录）
+      const hasAnyTrade = tradeList.some(t => bareCode(t.code) === bare)
+      if (hasAnyTrade) {
+        codesWithHoldings.add(bare)
+      }
+    }
+  })
+  
+  const codes = [...codesWithHoldings].map(bare => {
+    // 找到完整代码（带市场前缀）
+    const t = tradeList.find(t => bareCode(t.code) === bare)
+    return t ? normalizeCode(t.code) : bare
+  }).filter(Boolean)
+  
+  // 如果没有找到任何股票，尝试使用全部交易股票
+  if (codes.length === 0) {
+    console.log('[资产分析] 未找到期间内有持仓的股票，使用全部交易股票')
+    const allCodes = [...new Set(tradeList.map(t => normalizeCode(t.code)))].filter(Boolean)
+    codes.push(...allCodes)
+  }
+  
+  console.log(`[资产分析] 期间: ${periodStart} ~ ${periodEnd}, 股票数量: ${codes.length}, 总交易: ${tradeList.length}, 期间交易: ${periodTradeList.length}`)
+  
+  const stocks = []
   const tradeDateSet = new Set()
   tradeList.forEach(t => {
     const d = String(t.time).slice(0, 10)
     tradeDateSet.add(d)
   })
   
-  // 获取最早的交易日期（用于过滤K线数据）
-  const firstTradeDate = tradeDateSet.size > 0 ? [...tradeDateSet].sort()[0] : null
-  
-  // 收集所有K线日期（只从最早交易日期开始）
+  // 收集所有K线日期
   const allDateSet = new Set()
   
-  // 存储每笔交易的明细（用于FIFO成本计算）
-  const tradeDetails = {} // { code: [{date, type, price, qty}] }
-  
+  // 步骤4：只获取期间内有持仓的股票的K线数据
   for (const c of codes) {
     const bare = bareCode(c)
     const st = { code: bare, name: (tradeList.find(t => bareCode(t.code) === bare) || {}).name || bare, closes: {}, orders: {}, dayPnl: {}, hold: {} }
     
-    // 初始化交易明细
-    tradeDetails[bare] = []
-    
-    // 先收集交易明细（用于后续计算）
+    // 收集交易明细（所有历史交易，用于计算累计持仓）
     tradeList.filter(t => bareCode(t.code) === bare).forEach(t => {
       const d = String(t.time).slice(0, 10)
-      // 只记录从最早交易日期开始的交易
-      if (firstTradeDate && d < firstTradeDate) return
       if (!st.orders[d]) st.orders[d] = { buyQty: 0, sellQty: 0, buyAmt: 0, sellAmt: 0 }
       if (t.type === 'buy') { 
         st.orders[d].buyQty += t.qty; 
-        st.orders[d].buyAmt += t.qty * t.price;
-        tradeDetails[bare].push({ date: d, type: 'buy', price: t.price, qty: t.qty });
+        const actualAmount = t.actualAmount !== undefined ? t.actualAmount : (t.price * t.qty + (t.fee || 0));
+        st.orders[d].buyAmt += actualAmount;
       } else { 
         st.orders[d].sellQty += t.qty; 
-        st.orders[d].sellAmt += t.qty * t.price;
-        tradeDetails[bare].push({ date: d, type: 'sell', price: t.price, qty: t.qty });
+        const actualAmount = t.actualAmount !== undefined ? t.actualAmount : (t.price * t.qty - (t.fee || 0));
+        st.orders[d].sellAmt += actualAmount;
       }
     })
     
+    // 获取K线数据（只获取期间相关的数据）
     try {
-      const res = await fetch(`${API}/kline/${c}?period=day&count=1000`)
+      // 计算需要获取的K线条数：从最早交易日期到期间结束
+      const klineStartDate = firstTradeDate
+      const klineEndDate = periodEnd
+      // 估算K线条数（最多1000条）
+      const klineCount = Math.min(1000, Math.ceil((new Date(klineEndDate) - new Date(klineStartDate)) / (1000 * 60 * 60 * 24)) + 10)
+      
+      const res = await fetch(`${API}/kline/${c}?period=day&count=${klineCount}`)
       const data = await res.json()
       ;(data.klines || []).forEach(k => { 
-        if (k.date) {
-          // 只保留从最早交易日期开始的K线数据
-          if (!firstTradeDate || k.date >= firstTradeDate) {
-            st.closes[k.date] = k.close
-            allDateSet.add(k.date)
-          }
+        if (k.date && k.date >= firstTradeDate && k.date <= klineEndDate) {
+          st.closes[k.date] = k.close
+          allDateSet.add(k.date)
         }
       })
     } catch (e) { /* 无K线时仅统计已实现交易差额 */ }
@@ -1626,72 +1888,131 @@ async function buildDailyData(tradeList) {
   }
   
   // days 从交易日期和K线日期中合并，确保包含持仓期间的所有交易日
-  // 从最早的交易日期开始，过滤掉早于最早的交易日期的K线数据
-  const filteredDateSet = new Set([...allDateSet].filter(d => !firstTradeDate || d >= firstTradeDate))
-  const days = [...new Set([...tradeDateSet, ...filteredDateSet])].sort()
-  console.log('最早交易日期:', firstTradeDate, '总天数:', days.length, '交易日期数:', tradeDateSet.size, 'K线日期数:', allDateSet.size) // 调试日志
-  if (!days.length) return null
+  let days = [...new Set([...tradeDateSet, ...allDateSet])].filter(d => d >= periodStart && d <= periodEnd).sort()
+  
+  // 如果 days 为空，使用交易日期（不依赖 K 线数据）
+  if (!days.length) {
+    days = [...tradeDateSet].filter(d => d >= periodStart && d <= periodEnd).sort()
+    console.log('[资产分析] K线数据不足，使用交易日期进行统计')
+  }
+  
+  console.log('统计期间:', periodStart, '~', periodEnd, '交易日数:', days.length)
+  if (!days.length) {
+    // 即使没有任何日期，也返回空结果而不是 null
+    console.log('[资产分析] 无交易数据')
+    return { stocks: [], days: [], latestDay: null }
+  }
   
   // 使用持仓管理的逻辑计算盈亏：总盈亏 = 现价×持仓 + 卖出-买入
   // 对于每一天，计算该日的市值变化和已实现盈亏
   
-  // 初始化每日盈亏
-  const stockDayPnl = {} // { code: { date: pnl } }
-  const stockBuyAmt = {} // { code: total buy amount }
-  const stockSellAmt = {} // { code: total sell amount }
-  const stockQty = {} // { code: current quantity }
-  
+  // ============ 逐日盈亏计算（参考持仓管理逻辑，差分方式） ============
+  // 持仓管理口径：总盈亏 = 现价×持仓数量 + Σ卖出金额 - Σ买入金额（发生金额）
+  // 当日盈亏 = 今日总盈亏 - 昨日总盈亏（数学上等价于持仓管理的当日盈亏公式，
+  //   且自动处理期初持仓与K线边界昨收，无需显式计算昨收价）
+
+  // 1. 构建所有 K 线日期的有序数组（含期间前数据，用于获取期初市值）
+  const allKlineDates = [...allDateSet].sort()
+
+  // 2. 计算期初持仓：periodStart 之前所有交易的累计结果
+  //    修复点：原代码 prevQty 初始化为 0，未累加期间前的交易，导致期初持仓丢失
+  const initialQty = {}
+  const initialBuyAmt = {}
+  const initialSellAmt = {}
   codes.forEach(c => {
     const bare = bareCode(c)
-    stockDayPnl[bare] = {}
-    stockBuyAmt[bare] = 0
-    stockSellAmt[bare] = 0
-    stockQty[bare] = 0
+    initialQty[bare] = 0
+    initialBuyAmt[bare] = 0
+    initialSellAmt[bare] = 0
   })
-  
-  // 逐日计算盈亏
+  tradeList.slice().sort((a, b) => new Date(a.time) - new Date(b.time)).forEach(t => {
+    const bare = bareCode(t.code)
+    if (!(bare in initialQty)) return
+    const d = String(t.time).slice(0, 10)
+    if (d >= periodStart) return
+    const actualAmount = t.actualAmount !== undefined ? t.actualAmount
+      : (t.type === 'buy' ? t.price * t.qty + (t.fee || 0) : t.price * t.qty - (t.fee || 0))
+    initialQty[bare] += t.type === 'sell' ? -t.qty : t.qty
+    if (t.type === 'buy') initialBuyAmt[bare] += actualAmount
+    else initialSellAmt[bare] += actualAmount
+  })
+
+  // 3. 获取每只股票在 periodStart 前最后一个有效收盘价（用于计算期初市值）
+  //    修复点：原代码 lastValidClose 只在 days 范围内查找，期间前收盘价丢失
+  const lastCloseBeforePeriod = {}
+  codes.forEach(c => {
+    const bare = bareCode(c)
+    const st = stocks.find(s => s.code === bare)
+    let lastClose = 0
+    for (const d of allKlineDates) {
+      if (d >= periodStart) break
+      if (st.closes[d] && st.closes[d] > 0) lastClose = st.closes[d]
+    }
+    lastCloseBeforePeriod[bare] = lastClose
+  })
+
+  // 4. 获取每只股票在期间内最后一个有效收盘价（停牌时取最近收盘价）
+  //    修复点：原代码 lastValidClose 不含期间前数据，停牌时可能为 0
+  const lastValidClose = {}
+  codes.forEach(c => {
+    const bare = bareCode(c)
+    const st = stocks.find(s => s.code === bare)
+    let lastClose = lastCloseBeforePeriod[bare]
+    days.forEach(d => {
+      if (st.closes[d] && st.closes[d] > 0) lastClose = st.closes[d]
+    })
+    lastValidClose[bare] = lastClose
+  })
+
+  // 5. 计算期初总盈亏（差分基准）：期初市值 + 期初卖出 - 期初买入
+  //    修复点：原代码昨收首日设为 0，导致首日盈亏虚高；差分方式自动消除此问题
+  const prevTotalProfit = {}
+  codes.forEach(c => {
+    const bare = bareCode(c)
+    const initialMarketValue = lastCloseBeforePeriod[bare] * initialQty[bare]
+    prevTotalProfit[bare] = initialMarketValue + initialSellAmt[bare] - initialBuyAmt[bare]
+  })
+
+  // 6. 逐日差分计算盈亏：累计持仓/金额从期初值开始累加
+  //    修复点：原代码 cumBuyAmt/cumSellAmt 从 0 开始，未含期初值，导致累计盈亏错误
+  const cumQty = {}
+  const cumBuyAmt = {}
+  const cumSellAmt = {}
+  codes.forEach(c => {
+    const bare = bareCode(c)
+    cumQty[bare] = initialQty[bare]
+    cumBuyAmt[bare] = initialBuyAmt[bare]
+    cumSellAmt[bare] = initialSellAmt[bare]
+  })
+
   days.forEach(d => {
     stocks.forEach(s => {
-      const o = s.orders[d] || { buyQty: 0, sellQty: 0, buyAmt: 0, sellAmt: 0 }
-      const close = s.closes[d]
       const bare = s.code
-      
-      // 更新持仓数量
-      stockQty[bare] += o.buyQty - o.sellQty
-      
-      // 更新累计买入卖出金额
-      stockBuyAmt[bare] += o.buyAmt
-      stockSellAmt[bare] += o.sellAmt
-      
-      // 获取当前持仓市值和累计盈亏（持仓管理逻辑）
-      const price = close || 0
-      const currentHoldQty = stockQty[bare]
-      const currentBuyAmt = stockBuyAmt[bare]
-      const currentSellAmt = stockSellAmt[bare]
-      
-      // 记录每日持仓数量
+      const o = s.orders[d] || { buyQty: 0, sellQty: 0, buyAmt: 0, sellAmt: 0 }
+
+      // 更新累计持仓和金额（发生金额，含费用）
+      cumQty[bare] += o.buyQty - o.sellQty
+      cumBuyAmt[bare] += o.buyAmt
+      cumSellAmt[bare] += o.sellAmt
+
+      // 获取当日收盘价（停牌时用最近有效收盘价）
+      const close = s.closes[d] || lastValidClose[bare] || 0
+
+      // 当日总盈亏 = 市值 + 累计卖出 - 累计买入（与持仓管理 totalProfit 口径一致）
+      const marketValue = close * cumQty[bare]
+      const totalProfit = marketValue + cumSellAmt[bare] - cumBuyAmt[bare]
+
+      // 当日盈亏 = 今日总盈亏 - 昨日总盈亏（差分方式，等价于持仓管理当日盈亏公式）
+      const dayPnl = totalProfit - prevTotalProfit[bare]
+
+      // 记算每日持仓数量
       if (!s.hold) s.hold = {}
-      s.hold[d] = currentHoldQty
-      
-      // 今日持仓市值 = 当前收盘价 × 当前持仓数量
-      const todayMarketValue = price * currentHoldQty
-      // 累计买卖差额 = 累计卖出金额 - 累计买入金额
-      const totalRealized = currentSellAmt - currentBuyAmt
-      // 累计总盈亏 = 今日持仓市值 + 累计买卖差额
-      const totalProfit = todayMarketValue + totalRealized
-      
-      // 获取昨天的累计总盈亏
-      const prevDay = d > days[0] ? days[days.indexOf(d) - 1] : null
-      const prevTotalProfit = prevDay ? (stockDayPnl[bare][prevDay] || 0) : 0
-      
-      // 今日盈亏 = 今日累计总盈亏 - 昨日累计总盈亏
-      const pnl = totalProfit - prevTotalProfit
-      
-      s.dayPnl[d] = pnl
-      stockDayPnl[bare][d] = totalProfit
+      s.hold[d] = cumQty[bare]
+      s.dayPnl[d] = dayPnl
+      prevTotalProfit[bare] = totalProfit
     })
   })
-  
+
   return { stocks, days, latestDay: days[days.length - 1] }
 }
 
@@ -1731,28 +2052,33 @@ function calcAssetPeriod(all) {
     prevStart = addMonths(start, -1)
     const py = parseInt(prevStart.slice(0, 4)), pm = parseInt(prevStart.slice(5, 7))
     prevEnd = `${prevStart.slice(0, 7)}-${String(new Date(py, pm - 1, 0).getDate()).padStart(2, '0')}`
-    label = start.slice(0, 7)
+    label = `${start} ~ ${end}`
   } else { // year
     const anchor = assetSelYear ? String(assetSelYear) : latest
     start = anchor.slice(0, 4) + '-01-01'
     end = anchor.slice(0, 4) + '-12-31'
     prevStart = (parseInt(anchor.slice(0, 4)) - 1) + '-01-01'
     prevEnd = (parseInt(anchor.slice(0, 4)) - 1) + '-12-31'
-    label = anchor.slice(0, 4)
+    label = `${start} ~ ${end}`
   }
   const sumRange = (s, e) => {
     let pnl = 0
+    // 只计算 days 数组中存在的日期
     days.forEach(d => { if (d >= s && d <= e) pnl += all.stocks.reduce((x, st) => x + (st.dayPnl[d] || 0), 0) })
     return pnl
   }
   const cur = sumRange(start, end)
-  const prev = (prevStart && prevEnd) ? sumRange(prevStart, prevEnd) : null
+  // 上期对比：如果 days 数组中没有上期数据，则 prev = null
+  const hasPrevData = days.some(d => d >= prevStart && d <= prevEnd)
+  const prev = (prevStart && prevEnd && hasPrevData) ? sumRange(prevStart, prevEnd) : null
   const tradesIn = trades.filter(t => {
     const d = String(t.time).slice(0, 10)
     return d >= start && d <= end
   })
   const buys = tradesIn.filter(t => t.type === 'buy').length
   const sells = tradesIn.filter(t => t.type === 'sell').length
+  // 计算期间交易费用：所有交易的费用总和
+  const totalFee = tradesIn.reduce((sum, t) => sum + (t.fee || 0), 0)
   // 计算期间内每只股票的盈亏
   const stockPnlRaw = all.stocks.map(st => {
     let p = 0
@@ -1792,7 +2118,7 @@ function calcAssetPeriod(all) {
   // 各取最多5支正收益和5支负收益的股票
   const positiveStocks = stockPnl.filter(x => x.pnl > 0).slice(0, 5)
   const negativeStocks = stockPnl.filter(x => x.pnl < 0).slice(0, 5)
-  return { start, end, prevStart, prevEnd, label, cur, prev, totalProfit, buys, sells, positiveStocks, negativeStocks }
+  return { start, end, prevStart, prevEnd, label, cur, prev, totalProfit, buys, sells, totalFee, positiveStocks, negativeStocks }
 }
 
 // 悬浮提示：显示日期期间与收益金额
@@ -2050,8 +2376,12 @@ function renderAssetAnalysis() {
     return
   }
   resultEl.style.display = 'block'
-  if (!assetAllData || !assetAllData.days.length) {
+  if (!assetAllData) {
     resultEl.innerHTML = '<div class="error-msg">行情数据为空，无法统计</div>'
+    return
+  }
+  if (!assetAllData.days || !assetAllData.days.length) {
+    resultEl.innerHTML = '<div class="success-msg">📊 在选定的时间范围内暂无持仓或交易记录，可尝试切换其他时间段或添加交易明细后再查看</div>'
     return
   }
   if (assetType === 'day' && document.getElementById('assetDateInput').type !== 'date') { /* 已切换 */ }
@@ -2059,6 +2389,7 @@ function renderAssetAnalysis() {
   const rangeLabel = document.getElementById('assetRangeLabel')
   rangeLabel.textContent = `${p.label}${p.start !== p.end ? '' : ''}`
   const fmt = n => `${n >= 0 ? '+' : ''}${formatNumber(n, 2)}`
+  const fmtFee = n => formatNumber(n, 2)
   const diff = (p.prev != null) ? p.cur - p.prev : null
   const pct = (p.prev != null && p.prev !== 0) ? ((p.cur - p.prev) / Math.abs(p.prev)) * 100 : null
   let html = `
@@ -2066,6 +2397,10 @@ function renderAssetAnalysis() {
       <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;">
         <div style="font-size:12px;color:#6a7a9e;">期间盈亏</div>
         <div style="font-size:20px;color:${p.cur >= 0 ? '#ff4646' : '#00c864'};">${fmt(p.cur)}</div>
+      </div>
+      <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;">
+        <div style="font-size:12px;color:#6a7a9e;">期间交易费用</div>
+        <div style="font-size:20px;color:#ffb400;">${fmtFee(p.totalFee)}</div>
       </div>
       <div style="background:#111836;border:1px solid #1e2d5a;border-radius:8px;padding:10px;">
         <div style="font-size:12px;color:#6a7a9e;">累计盈亏（截止到当前期间）</div>

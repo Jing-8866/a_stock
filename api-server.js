@@ -112,7 +112,7 @@ function fetchBuffer(urlStr, extraHeaders) {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Connection': 'close',
+      'Connection': 'keep-alive',
       'Referer': referer
     }, extraHeaders || {})
     const options = {
@@ -121,7 +121,7 @@ function fetchBuffer(urlStr, extraHeaders) {
       path: url.pathname + url.search,
       method: 'GET',
       headers,
-      timeout: 15000
+      timeout: 30000
     }
     const req = client.request(options, (res) => {
       const chunks = []
@@ -710,28 +710,118 @@ function toSecid(code) {
  * 返回 [{ date, open, close, high, low, volume }]
  */
 async function emFetchKline(secid, period, count) {
-  const s = String(secid || '').toLowerCase()
-  let emSecid = ''
-  if (s.startsWith('sh')) emSecid = '1.' + s.slice(2)
-  else if (s.startsWith('sz') || s.startsWith('bj')) emSecid = '0.' + s.slice(2)
-  else if (/^\d{6}$/.test(s)) emSecid = (s.startsWith('6') ? '1.' : '0.') + s
-  if (!emSecid) return []
-  const klt = period === 'week' ? 102 : (period === 'month' ? 103 : 101)
-  const lmt = Math.max(1, Math.min(1000, parseInt(count) || 320))
-  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${emSecid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&end=20500101&lmt=${lmt}`
-  const data = await emFetchJson(url)
-  const lines = (data && data.data && data.data.klines) || []
-  return lines.map(line => {
-    const p = String(line).split(',')
-    return {
-      date: p[0] || '',
-      open: parseFloat(p[1]) || null,
-      close: parseFloat(p[2]) || null,
-      high: parseFloat(p[3]) || null,
-      low: parseFloat(p[4]) || null,
-      volume: parseFloat(p[5]) || null
+  try {
+    const s = String(secid || '').toLowerCase().trim()
+    let emSecid = ''
+    if (s.startsWith('sh')) emSecid = '1.' + s.slice(2)
+    else if (s.startsWith('sz') || s.startsWith('bj')) emSecid = '0.' + s.slice(2)
+    else if (/^\d{6}$/.test(s)) emSecid = (s.startsWith('6') ? '1.' : '0.') + s
+    if (!emSecid) {
+      console.error(`[ERROR] 无效的secid: ${secid}`)
+      return []
     }
-  }).filter(k => k.close !== null && k.close > 0)
+    const klt = period === 'week' ? 102 : (period === 'month' ? 103 : 101)
+    const lmt = Math.max(1, Math.min(1000, parseInt(count) || 320))
+    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${emSecid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&end=20500101&lmt=${lmt}`
+    console.log(`[DEBUG] 东财K线URL: ${url}`)
+    const buffer = await fetchBuffer(url)
+    const text = buffer.toString('utf8')
+    console.log(`[DEBUG] 东财K线响应长度: ${text.length}`)
+    const data = JSON.parse(text)
+    const lines = (data && data.data && data.data.klines) || []
+    console.log(`[DEBUG] 东财K线原始行数: ${lines.length}`)
+    return lines.map(line => {
+      const p = String(line).split(',')
+      return {
+        date: p[0] || '',
+        open: parseFloat(p[1]) || null,
+        close: parseFloat(p[2]) || null,
+        high: parseFloat(p[3]) || null,
+        low: parseFloat(p[4]) || null,
+        volume: parseFloat(p[5]) || null
+      }
+    }).filter(k => {
+      if (k.close === null) {
+        console.log(`[WARN] 过滤掉close为null的记录: ${JSON.stringify(k)}`)
+        return false
+      }
+      if (k.close <= 0) {
+        console.log(`[WARN] 过滤掉close<=0的记录: ${JSON.stringify(k)}`)
+        return false
+      }
+      return true
+    })
+  } catch (e) {
+    console.error(`[ERROR] 东财K线获取失败: ${e.message}`)
+    console.error(`[ERROR] 堆栈: ${e.stack}`)
+    return []
+  }
+}
+
+/** 新浪 K 线（降级源）
+ * symbol: sz002342 或 002342
+ * period: day | week | month
+ * 返回 [{ date, open, close, high, low, volume }]
+ */
+async function sinaKline(symbol, period, count) {
+  try {
+    // 新浪 K 线接口参数
+    // scale: 5=5分钟，15=15分钟，30=30分钟，60=60分钟，240=日，1200=周
+    // 注意：新浪不支持月K，月K降级为日K
+    const scale = period === 'week' ? 1200 : (period === 'month' ? 240 : 240)
+    
+    // 新浪接口需要完整的股票代码（带前缀）
+    let sinaSymbol = symbol
+    if (!/^(sh|sz|bj)\d{6}$/.test(sinaSymbol)) {
+      if (sinaSymbol.startsWith('6')) sinaSymbol = 'sh' + sinaSymbol
+      else if (sinaSymbol.startsWith('4') || sinaSymbol.startsWith('8')) sinaSymbol = 'bj' + sinaSymbol
+      else sinaSymbol = 'sz' + sinaSymbol
+    }
+    
+    const url = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_${sinaSymbol}_${scale}_1577432551767=/CN_MarketDataService.getKLineData?symbol=${sinaSymbol}&scale=${scale}&ma=no&datalen=${count}`
+    console.log(`[DEBUG] 新浪K线URL: ${url}`)
+    const buf = await fetchBuffer(url)
+    let text = buf.toString('utf8')
+    if (text.indexOf('\uFFFD') !== -1) text = decodeGBK(buf)
+    
+    console.log(`[DEBUG] 新浪K线响应前500字符: ${text.substring(0, 500)}`)
+    
+    // 提取 JSON 数据 - 新浪返回格式: var _symbol_scale_timestamp=([...]);
+    const m = text.match(/=\s*(\[[\s\S]*\])\s*;?/)
+    if (!m) {
+      console.error(`[ERROR] 新浪K线解析失败: 未找到 JSON 数据`)
+      console.error(`[ERROR] 响应内容: ${text}`)
+      return []
+    }
+    
+    const arr = JSON.parse(m[1])
+    if (!Array.isArray(arr) || !arr.length) {
+      console.error(`[ERROR] 新浪K线无数据`)
+      return []
+    }
+    
+    const klines = arr.map(point => {
+      return {
+        date: point.day || '',
+        open: parseFloat(point.open) || null,
+        close: parseFloat(point.close) || null,
+        high: parseFloat(point.high) || null,
+        low: parseFloat(point.low) || null,
+        volume: parseFloat(point.volume) || null
+      }
+    }).filter(k => {
+      if (k.close === null) return false
+      if (k.close <= 0) return false
+      return true
+    })
+    
+    console.log(`[DEBUG] 新浪K线解析成功，条数: ${klines.length}`)
+    return klines
+  } catch (e) {
+    console.error(`[ERROR] 新浪K线获取失败: ${e.message}`)
+    console.error(`[ERROR] 堆栈: ${e.stack}`)
+    return []
+  }
 }
 
 /** 新浪分时（优先，时间字段明确）→ 返回 [{time:"09:30", price, volume}] */
@@ -832,9 +922,9 @@ app.get('/api/kline/:code', async (req, res) => {
     if (period === 'minute') {
       // 优先新浪分时，失败降级腾讯分时
       let points = []
-      try { points = await sinaMinute(secid) } catch (e) { /* 继续 */ }
+      try { points = await tencentMinute(secid) } catch (e) { /* 继续 */ }
       if (!points.length) {
-        try { points = await tencentMinute(secid) } catch (e2) { /* 继续 */ }
+        try { points = await sinaMinute(secid) } catch (e2) { /* 继续 */ }
       }
       const prevClose = await fetchPrevClose(secid)
       return res.json({ code: secid, period: 'minute', prevClose, points })
@@ -844,7 +934,10 @@ app.get('/api/kline/:code', async (req, res) => {
     let klines = []
     // 优先腾讯 fqkline，失败（如 HTTP 501 接口废弃）降级东财
     try {
-      const text = await fetchUrl(`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${secid},${pf},,,${count},qfq`)
+      const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${secid},${pf},,,${count},qfq`
+      console.log(`[DEBUG] 腾讯K线URL: ${url}`)
+      const text = await fetchUrl(url)
+      console.log(`[DEBUG] 腾讯K线响应前200字符: ${text.substring(0, 200)}`)
       const json = JSON.parse(text)
       const d = json && json.data && json.data[secid]
       const rows = d ? (d['qfq' + pf] || d[pf] || []) : []
@@ -856,12 +949,36 @@ app.get('/api/kline/:code', async (req, res) => {
         low: parseFloat(r[4]) || null,
         volume: parseFloat(r[5]) || null
       })).filter(k => k.close !== null && k.close > 0)
-    } catch (e) { /* 腾讯失败，降级东财 */ }
+      console.log(`[DEBUG] 腾讯K线获取成功，条数: ${klines.length}`)
+    } catch (e) {
+      console.log(`[WARN] 腾讯K线获取失败: ${e.message}, 尝试降级到东财`)
+    }
     if (!klines.length) {
-      klines = await emFetchKline(secid, pf, count)
+      console.log(`[INFO] 腾讯K线无数据，尝试东财`)
+      try {
+        klines = await emFetchKline(secid, pf, count)
+        console.log(`[DEBUG] 东财K线获取成功，条数: ${klines.length}`)
+      } catch (e) {
+        console.error(`[ERROR] 东财K线获取失败: ${e.message}`)
+      }
+    }
+    if (!klines.length) {
+      console.log(`[INFO] 东财K线无数据，尝试新浪`)
+      try {
+        const symbol = secid.toLowerCase().replace(/^(sh|sz|bj)(\d{6})$/, '$2')
+        klines = await sinaKline(symbol, pf, count)
+        console.log(`[DEBUG] 新浪K线获取成功，条数: ${klines.length}`)
+      } catch (e) {
+        console.error(`[ERROR] 新浪K线获取失败: ${e.message}`)
+      }
+    }
+    // 所有数据源都尝试过后，返回结果（可能为空数组）
+    if (!klines.length) {
+      console.log(`[WARN] 所有K线数据源均失败，返回空数据`)
     }
     res.json({ code: secid, period: pf, klines })
   } catch (e) {
+    console.error(`[ERROR] K线接口异常: ${e.message}`)
     res.status(500).json({ error: e.message, points: [], klines: [] })
   }
 })

@@ -74,7 +74,7 @@
   <div class="card" id="holdingsCard" style="display:none;">
     <div class="card-title">💼 持仓管理 <span style="font-size:12px;color:#6a7a9e;">按交易明细自动汇总持仓与盈亏</span></div>
     <div class="input-group">
-      <div class="input-wrap" style="flex:1; min-width:180px;">
+      <div class="input-wrap" style="flex:0 0 auto; min-width:140px;">
         <input type="text" id="holdStockInput" placeholder="股票代码或名称">
         <button type="button" class="clear-input" onclick="document.getElementById('holdStockInput').value=''" title="清空">✕</button>
       </div>
@@ -84,7 +84,8 @@
       </select>
       <input type="datetime-local" id="holdTimeInput" step="1" style="width:200px;" title="交易时间">
       <input type="number" id="holdCostInput" placeholder="交易股价" step="0.01" min="0" style="width:110px;">
-      <input type="number" id="holdQtyInput" placeholder="数量(股)" step="1" min="1" style="width:110px;">
+      <input type="number" id="holdQtyInput" placeholder="数量(股)" step="1" min="1" style="width:100px;">
+      <input type="number" id="holdFeeInput" placeholder="费用" step="0.01" min="0" style="width:80px;">
       <button onclick="addTrade()">➕ 交易</button>
       <button class="secondary" onclick="loadHoldings()">🔄 刷新</button>
       <button class="secondary" onclick="clearHoldInput()">🗑️ 重置</button>
