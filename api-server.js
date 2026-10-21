@@ -930,6 +930,70 @@ app.get('/api/kline/:code', async (req, res) => {
       return res.json({ code: secid, period: 'minute', prevClose, points })
     }
 
+    if (period === 'day5') {
+      // 近5个交易日的分时走势：用5分钟K线数据
+      let minKlines = []
+      // 优先东财5分钟K线（klt=5）
+      try {
+        const s = String(secid || '').toLowerCase().trim()
+        let emSecid = ''
+        if (s.startsWith('sh')) emSecid = '1.' + s.slice(2)
+        else if (s.startsWith('sz') || s.startsWith('bj')) emSecid = '0.' + s.slice(2)
+        else if (/^\d{6}$/.test(s)) emSecid = (s.startsWith('6') ? '1.' : '0.') + s
+        if (emSecid) {
+          const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${emSecid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=5&fqt=1&end=20500101&lmt=250`
+          const buffer = await fetchBuffer(url)
+          const data = JSON.parse(buffer.toString('utf8'))
+          const lines = (data && data.data && data.data.klines) || []
+          minKlines = lines.map(line => {
+            const p = String(line).split(',')
+            return { date: p[0] || '', close: parseFloat(p[2]) || null, volume: parseFloat(p[5]) || null }
+          }).filter(k => k.close !== null && k.close > 0)
+        }
+      } catch (e) { /* 降级新浪 */ }
+      // 降级新浪5分钟K线（scale=5）
+      if (!minKlines.length) {
+        try {
+          const symbol = secid.toLowerCase().replace(/^(sh|sz|bj)(\d{6})$/, '$2')
+          let sinaSymbol = symbol
+          if (!/^(sh|sz|bj)\d{6}$/.test(sinaSymbol)) {
+            if (sinaSymbol.startsWith('6')) sinaSymbol = 'sh' + sinaSymbol
+            else if (sinaSymbol.startsWith('4') || sinaSymbol.startsWith('8')) sinaSymbol = 'bj' + sinaSymbol
+            else sinaSymbol = 'sz' + sinaSymbol
+          }
+          const url = `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_=/CN_MarketDataService.getKLineData?symbol=${sinaSymbol}&scale=5&ma=no&datalen=250`
+          const buf = await fetchBuffer(url)
+          let text = buf.toString('utf8')
+          if (text.indexOf('\uFFFD') !== -1) text = decodeGBK(buf)
+          const m = text.match(/=\s*(\[[\s\S]*\])\s*;?/)
+          if (m) {
+            const arr = JSON.parse(m[1])
+            minKlines = arr.map(point => ({
+              date: point.day || '',
+              close: parseFloat(point.close) || null,
+              volume: parseFloat(point.volume) || null
+            })).filter(k => k.close !== null && k.close > 0)
+          }
+        } catch (e) { /* 继续 */ }
+      }
+      // 取最近5个交易日
+      const daySet = [...new Set(minKlines.map(k => k.date.slice(0, 10)))].sort()
+      const last5Days = daySet.slice(-5)
+      const filtered = minKlines.filter(k => last5Days.includes(k.date.slice(0, 10)))
+      const points = filtered.map(k => ({ time: k.date, price: k.close, volume: k.volume }))
+      // prevClose = 第一天的昨收（从日K线获取前一天收盘价）
+      let prevClose = null
+      if (last5Days.length > 0) {
+        try {
+          const dayKlines = await emFetchKline(secid, 'day', 10)
+          const prevDayKlines = dayKlines.filter(k => k.date < last5Days[0])
+          if (prevDayKlines.length) prevClose = prevDayKlines[prevDayKlines.length - 1].close
+        } catch (e) { /* 继续 */ }
+      }
+      if (!prevClose) prevClose = await fetchPrevClose(secid)
+      return res.json({ code: secid, period: 'day5', prevClose, points, days: last5Days })
+    }
+
     const pf = period === 'week' ? 'week' : period === 'month' ? 'month' : 'day'
     let klines = []
     // 优先腾讯 fqkline，失败（如 HTTP 501 接口废弃）降级东财

@@ -13,6 +13,11 @@ let editTradeId = null // 当前正在编辑的交易ID
 let lastQuoteMap = {}
 let showCleared = false
 let lastAnalyzedCode = null
+let holdingPage = 1
+let holdingPageSize = 10
+let tradePageMap = {}
+let tradePageSize = 10
+let currentHoldingList = []
 
 // 账号体系：交易明细按账号隔离，自选股/行情等不受账号影响
 let accounts = []
@@ -256,6 +261,9 @@ async function runAnalyze(code) {
 // ============ 股票走势图 ============
 let currentChartCode = null
 let chartTimer = null
+let cachedKlines = null
+let cachedPeriod = null
+let chartStartDate = null
 
 function showStockChart(code, name) {
   currentChartCode = normalizeCode(code)
@@ -275,11 +283,9 @@ async function loadChart(period) {
   msgEl.innerHTML = '<span class="loading"></span>加载走势图...'
   container.innerHTML = ''
   try {
-    const apiPeriod = period === 'day5' ? 'day' : period
-    // 五日图需要5个交易日的分时数据，日K/周K/月K请求320条
-    const count = period === 'day5' ? 5 : (period === 'minute' ? 1 : 320)
+    const count = period === 'minute' ? 1 : (period === 'day5' ? 5 : 320)
     // 单股分析走势图：不受资产分析期间限制，直接获取任意股票的K线数据
-    const apiUrl = `${API}/kline/${currentChartCode}?period=${apiPeriod}&count=${count}`
+    const apiUrl = `${API}/kline/${currentChartCode}?period=${period}&count=${count}`
     console.log('API请求:', apiUrl) // 调试日志
     const res = await fetch(apiUrl)
     console.log('API响应状态:', res.status, res.statusText) // 调试日志
@@ -301,8 +307,15 @@ async function loadChart(period) {
         const active = document.querySelector('#chartCard .chart-tab.active')
         if (active && active.dataset.period === 'minute' && currentChartCode) loadChart('minute')
       }, 30000)
+    } else if (data.period === 'day5' && data.points) {
+      renderLineChart(container, data.points.map(p => ({ x: p.time, y: p.price })), { prevClose: data.prevClose, multiDay: true, days: data.days })
     } else if (data.klines && data.klines.length > 0) {
-      renderLineChart(container, data.klines.map(k => ({ x: k.date, y: k.close, close: k.close, open: k.open, high: k.high, low: k.low })), { period: apiPeriod })
+      cachedKlines = data.klines
+      cachedPeriod = data.period
+      const kDates = data.klines.map(k => k.date).sort()
+      chartStartDate = kDates[Math.max(0, kDates.length - 41)]
+      const filtered = data.klines.filter(k => k.date >= chartStartDate)
+      renderLineChart(container, filtered.map(k => ({ x: k.date, y: k.close, close: k.close, open: k.open, high: k.high, low: k.low })), { period: data.period, chartMinDate: kDates[0], chartMaxDate: kDates[Math.max(0, kDates.length - 6)] })
     } else {
       msgEl.innerHTML = '<div class="error-msg">暂无走势数据，可能该股票已停牌或数据源暂时不可用</div>'
     }
@@ -310,6 +323,29 @@ async function loadChart(period) {
     console.error('加载走势图错误详情:', e) // 调试日志
     msgEl.innerHTML = `<div class="error-msg">走势图加载失败（${e.message}）</div>`
   }
+}
+
+function zoomChart(action) {
+  if (!cachedKlines || !cachedKlines.length) return
+  const dates = cachedKlines.map(k => k.date).sort()
+  const minDate = dates[0]
+  const maxDateIdx = Math.max(0, dates.length - 6)
+  const maxDate = dates[maxDateIdx]
+  if (action === 'reset') {
+    chartStartDate = dates[Math.max(0, dates.length - 41)]
+  } else {
+    const visible = cachedKlines.filter(k => k.date >= chartStartDate)
+    const step = Math.max(1, Math.round(visible.length * 0.1))
+    const currentIdx = dates.indexOf(chartStartDate)
+    if (action === 'in') {
+      chartStartDate = dates[Math.min(currentIdx + step, maxDateIdx)]
+    } else if (action === 'out') {
+      chartStartDate = dates[Math.max(0, currentIdx - step)]
+    }
+  }
+  const container = document.getElementById('chartContainer')
+  const filtered = cachedKlines.filter(k => k.date >= chartStartDate)
+  renderLineChart(container, filtered.map(k => ({ x: k.date, y: k.close, close: k.close, open: k.open, high: k.high, low: k.low })), { period: cachedPeriod, chartMinDate: minDate, chartMaxDate: maxDate })
 }
 
 function fmtTimeLabel(t) {
@@ -354,8 +390,11 @@ function renderLineChart(container, pts, opts) {
 
   // 分时：固定交易日时间轴 09:30–11:30 / 13:00–15:00，午休间隙压缩
   const timeAxis = !!opts.timeLabel
+  const multiDay = !!opts.multiDay
+  const dayList = opts.days || []
   const TS_BASE = 9 * 60 + 30
   const TS_NOON = 11 * 60 + 30
+  const T_DAY = 246
   const timeToIdx = t => {
     const s = String(t || '').replace(/[^0-9]/g, '').slice(-4)
     const m = s.match(/^(\d{2})(\d{2})$/)
@@ -365,10 +404,20 @@ function renderLineChart(container, pts, opts) {
     if (hh > 23 || mm > 59) return 0
     let v = (hh * 60 + mm) - TS_BASE
     if (v > TS_NOON - TS_BASE) v -= 85
-    return Math.max(0, Math.min(T_MAX, v))
+    return Math.max(0, Math.min(T_DAY, v))
   }
-  const T_MAX = timeAxis ? 246 : (n - 1)
-  const xs = timeAxis ? pts.map(p => timeToIdx(p.x)) : pts.map((p, i) => i)
+  // 多日分时：x 格式 "YYYY-MM-DD HH:MM:SS"，按天分组映射到连续区间
+  const multiDayToIdx = x => {
+    const str = String(x)
+    const datePart = str.slice(0, 10)
+    const timePart = str.slice(11, 16).replace(':', '')
+    const dayIdx = dayList.indexOf(datePart)
+    if (dayIdx < 0) return -1
+    return dayIdx * (T_DAY + 1) + timeToIdx(timePart)
+  }
+  const dayCount = Math.max(1, dayList.length)
+  const T_MAX = timeAxis ? T_DAY : (multiDay ? dayCount * (T_DAY + 1) - 1 : (n - 1))
+  const xs = timeAxis ? pts.map(p => timeToIdx(p.x)) : (multiDay ? pts.map(p => multiDayToIdx(p.x)) : pts.map((p, i) => i))
   const x = i => (T_MAX <= 0 ? pl + iw / 2 : pl + (xs[i] / T_MAX) * iw)
   const y = v => pt + ih - ((v - lo) / (hi - lo)) * ih
   const firstVal = values[0], lastVal = values[values.length - 1], prevClose = opts.prevClose
@@ -382,6 +431,9 @@ function renderLineChart(container, pts, opts) {
       // 分时：格式化时间为 HH:MM
       const s = raw.replace(/[^0-9]/g, '').slice(-4)
       return s.length === 4 ? s.slice(0, 2) + ':' + s.slice(2) : raw
+    } else if (multiDay) {
+      // 多日分时：显示 MM-DD HH:MM
+      return raw.slice(5, 10) + ' ' + raw.slice(11, 16)
     } else {
       // 非分时：显示完整日期 YYYY-MM-DD
       return raw
@@ -398,6 +450,13 @@ function renderLineChart(container, pts, opts) {
       { idx: timeToIdx('1400'), label: '14:00' },
       { idx: timeToIdx('1500'), label: '15:00' }
     ].map(t => ({ px: pl + (t.idx / T_MAX) * iw, label: t.label, anchor: 'middle' }))
+  } else if (multiDay) {
+    // 多日分时：每天显示一个日期标签
+    tickDefs = dayList.map((d, i) => ({
+      px: pl + ((i * (T_DAY + 1) + T_DAY / 2) / T_MAX) * iw,
+      label: d.slice(5),
+      anchor: 'middle'
+    }))
   } else {
     const idxs = n <= 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1]
     tickDefs = idxs.map(i => ({ px: x(i), label: xLabel(i), anchor: (i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle')) }))
@@ -405,7 +464,7 @@ function renderLineChart(container, pts, opts) {
 
   // 鼠标位置 → 最近数据点
   const nearestIndex = px => {
-    if (!timeAxis) return Math.max(0, Math.min(n - 1, Math.round(((px - pl) / iw) * (n - 1))))
+    if (!timeAxis && !multiDay) return Math.max(0, Math.min(n - 1, Math.round(((px - pl) / iw) * (n - 1))))
     const target = Math.max(0, Math.min(T_MAX, ((px - pl) / iw) * T_MAX))
     let best = 0, dist = Infinity
     for (let k = 0; k < n; k++) {
@@ -431,9 +490,21 @@ function renderLineChart(container, pts, opts) {
         let best = -1, dist = Infinity
         for (let k = 0; k < n; k++) {
           const d2 = Math.abs(xs[k] - ti)
-          if (d2 < dist) { dist = d2; best = k }
+          if (d2 < dist) { dist = d2, best = k }
         }
         if (dist <= 3) idx = best
+      } else if (multiDay) {
+        // 多日分时：按日期+时间匹配，仅标注5天范围内的交易
+        const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
+        const hhmm = String(dt.getHours()).padStart(2, '0') + String(dt.getMinutes()).padStart(2, '0')
+        const ti = multiDayToIdx(dateStr + ' ' + hhmm)
+        if (ti < 0) return
+        let best = -1, dist = Infinity
+        for (let k = 0; k < n; k++) {
+          const d2 = Math.abs(xs[k] - ti)
+          if (d2 < dist) { dist = d2, best = k }
+        }
+        if (dist <= 5) idx = best
       } else {
         const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
         // 找到第一个点位日期不早于交易日期：日K精确匹配，周/月K落入对应周期点位
@@ -490,7 +561,7 @@ function renderLineChart(container, pts, opts) {
   }).join('')
 
   let prevLine = ''
-  if (timeAxis && prevClose != null && prevClose >= lo && prevClose <= hi) {
+  if ((timeAxis || multiDay) && prevClose != null && prevClose >= lo && prevClose <= hi) {
     prevLine = `<line x1="${pl}" y1="${y(prevClose).toFixed(1)}" x2="${W - pr}" y2="${y(prevClose).toFixed(1)}" stroke="#8ea0c8" stroke-width="1" stroke-dasharray="4 3"/>`
   }
   container.innerHTML = `
@@ -503,6 +574,27 @@ function renderLineChart(container, pts, opts) {
       ${tickDefs.map(t => `<text x="${t.px.toFixed(1)}" y="${H - 6}" fill="#6a7a9e" font-size="${isMobile ? '10' : '11'}" text-anchor="${t.anchor}">${t.label}</text>`).join('')}
       <g data-tip></g>
     </svg>`
+
+  // 日/周/月K线添加缩放按钮
+  if (!timeAxis && !multiDay && opts.period) {
+    const atMin = chartStartDate <= opts.chartMinDate
+    const atMax = chartStartDate >= opts.chartMaxDate
+    const btns = document.createElement('div')
+    btns.style.cssText = 'position:absolute;top:2px;right:4px;display:flex;gap:3px;z-index:10;'
+    const mkBtn = (label, action, title, disabled) => {
+      const b = document.createElement('button')
+      b.textContent = label
+      b.title = title
+      b.style.cssText = `padding:1px 6px;font-size:12px;background:#1e2d5a;color:${disabled?'#3a4d7a':'#8ea0c8'};border:1px solid #3a4d7a;border-radius:3px;cursor:${disabled?'default':'pointer'};line-height:1.4;${disabled?'opacity:0.4;':''}`
+      if (disabled) { b.disabled = true } else { b.onclick = () => zoomChart(action) }
+      return b
+    }
+    btns.appendChild(mkBtn('−', 'out', '缩小：扩大显示范围', atMin))
+    btns.appendChild(mkBtn('↺', 'reset', '重置'))
+    btns.appendChild(mkBtn('+', 'in', '放大：缩小显示范围', atMax))
+    container.style.position = 'relative'
+    container.appendChild(btns)
+  }
 
   // 鼠标悬浮：显示对应时刻的时间与价格
   const svg = container.querySelector('svg')
@@ -519,14 +611,14 @@ function renderLineChart(container, pts, opts) {
     const nowDto = new Date()
     const pd = n => String(n).padStart(2, '0')
     const todayStr = `${nowDto.getFullYear()}-${pd(nowDto.getMonth()+1)}-${pd(nowDto.getDate())}`
-    const isDayK = timeAxis ? false : (!opts.period || opts.period === 'day')
+    const isDayK = (timeAxis || multiDay) ? false : (!opts.period || opts.period === 'day')
     const fontSize = isMobile ? 10 : 12
     const strokeWidth = isMobile ? 2 : 3
     tip.innerHTML = `
       <line x1="${px.toFixed(1)}" y1="${pt}" x2="${px.toFixed(1)}" y2="${pt + ih}" stroke="#8ea0c8" stroke-width="1" stroke-dasharray="3 3"/>
       <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4.5" fill="${lineColor}" stroke="#0a0e27" stroke-width="1.5"/>
       <g>
-        <text x="${pl + 4}" y="${pt - 4}" fill="#6a7a9e" font-size="${isMobile ? 10 : 11}" text-anchor="start">${timeAxis ? todayStr + ' ' : ''}${xLabel(i)}${timeAxis ? ` ${formatNumber(pts[i].y, 2)} 元` : `（${isDayK ? `收:${formatNumber(pts[i].y, 2)} 开:${(typeof pts[i].open === 'number' && pts[i].open > 0) ? formatNumber(pts[i].open, 2) : 'N/A'} ` : ''}高:${(typeof pts[i].high === 'number' && pts[i].high > 0) ? formatNumber(pts[i].high, 2) : 'N/A'} 低:${(typeof pts[i].low === 'number' && pts[i].low > 0) ? formatNumber(pts[i].low, 2) : 'N/A'}）`}</text>
+        <text x="${pl + 4}" y="${pt - 4}" fill="#6a7a9e" font-size="${isMobile ? 10 : 11}" text-anchor="start">${timeAxis ? todayStr + ' ' : ''}${xLabel(i)}${(timeAxis || multiDay) ? ` ${formatNumber(pts[i].y, 2)} 元` : `（${isDayK ? `收:${formatNumber(pts[i].y, 2)} 开:${(typeof pts[i].open === 'number' && pts[i].open > 0) ? formatNumber(pts[i].open, 2) : 'N/A'} ` : ''}高:${(typeof pts[i].high === 'number' && pts[i].high > 0) ? formatNumber(pts[i].high, 2) : 'N/A'} 低:${(typeof pts[i].low === 'number' && pts[i].low > 0) ? formatNumber(pts[i].low, 2) : 'N/A'}）`}</text>
         ${(function() {
           const tArr = tradeAtPoint[i] || []
           if (!tArr.length) return ''
@@ -1399,6 +1491,11 @@ function renderHoldings(quoteMap = {}) {
     .sort((a, b) => new Date(b.latestTime) - new Date(a.latestTime))
     .filter(s => showCleared || s.qty > 0)
 
+  currentHoldingList = list
+  const totalHoldingPages = Math.ceil(list.length / holdingPageSize) || 1
+  if (holdingPage > totalHoldingPages) holdingPage = totalHoldingPages
+  const pagedList = list.slice((holdingPage - 1) * holdingPageSize, holdingPage * holdingPageSize)
+
   // 总是显示复选框：展示已清仓
   const hasData = list.length > 0 || trades.length > 0
 
@@ -1439,7 +1536,7 @@ function renderHoldings(quoteMap = {}) {
       <table>
         <thead><tr><th>股票</th><th>成本价</th><th>数量</th><th>现价</th><th>市值</th><th>持仓收益</th><th>当日盈亏</th><th>操作</th></tr></thead>
         <tbody>
-        ${list.map(s => {
+        ${pagedList.map(s => {
           const bare = bareCode(s.code)
           const price = s.price || 0
           const yClose = s.yesterdayClose || 0
@@ -1447,6 +1544,20 @@ function renderHoldings(quoteMap = {}) {
           const holdColor = s.totalProfit >= 0 ? '#ff4646' : '#00c864'
           const dayColor = s.dayProfit >= 0 ? '#ff4646' : '#00c864'
           const expanded = expandedTradeCodes.indexOf(bare) >= 0
+          const tradePage = tradePageMap[bare] || 1
+          const sortedTrades = s.trades.slice().sort((a,b)=>new Date(b.time)-new Date(a.time))
+          const totalTradePages = Math.ceil(sortedTrades.length / tradePageSize) || 1
+          const tPage = Math.min(tradePage, totalTradePages)
+          const pagedTrades = sortedTrades.slice((tPage - 1) * tradePageSize, tPage * tradePageSize)
+          const tradePagination = `
+            <div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:4px 0;font-size:11px;color:#6a7a9e;">
+              <select onchange="changeTradePageSize(parseInt(this.value))" style="background:#0a0e27;color:#c8d6e5;border:1px solid #1e2d5a;border-radius:3px;padding:1px 3px;font-size:11px;">
+                ${[5,10,20,50].map(ps => `<option value="${ps}" ${ps===tradePageSize?'selected':''}>${ps}行/页</option>`).join('')}
+              </select>
+              <button class="secondary" style="padding:2px 6px;font-size:10px;" ${tPage<=1?'disabled':''} onclick="changeTradePage('${bare}', ${tPage - 1})">上一页</button>
+              <span>${tPage} / ${totalTradePages}</span>
+              <button class="secondary" style="padding:2px 6px;font-size:10px;" ${tPage>=totalTradePages?'disabled':''} onclick="changeTradePage('${bare}', ${tPage + 1})">下一页</button>
+            </div>`
           const detailRow = expanded ? `
           <tr>
             <td colspan="8" style="padding:10px 12px;background:#0a0e27;">
@@ -1455,10 +1566,11 @@ function renderHoldings(quoteMap = {}) {
               <table style="font-size:12px;border:1px solid #1e2d5a;">
                 <thead><tr><th>时间</th><th>交易方式</th><th>交易股价</th><th>交易数量</th><th>费用</th><th>交易金额</th><th>发生金额</th><th>操作</th></tr></thead>
                 <tbody>
-                  ${s.trades.slice().sort((a,b)=>new Date(b.time)-new Date(a.time)).map(t => renderTradeRow(t, editTradeId === t.id)).join('')}
+                  ${pagedTrades.map(t => renderTradeRow(t, editTradeId === t.id)).join('')}
                 </tbody>
               </table>
               </div>
+              ${tradePagination}
             </td>
           </tr>` : ''
           const holdPct = s.buyAmt > 0 ? s.totalProfit / s.buyAmt * 100 : 0
@@ -1488,6 +1600,14 @@ function renderHoldings(quoteMap = {}) {
         }).join('')}
         </tbody>
       </table>
+      <div style="display:flex;gap:8px;align-items:center;justify-content:center;padding:6px 0;font-size:12px;color:#6a7a9e;">
+        <select onchange="changeHoldingPageSize(parseInt(this.value))" style="background:#0a0e27;color:#c8d6e5;border:1px solid #1e2d5a;border-radius:3px;padding:2px 4px;">
+          ${[5,10,20,50].map(ps => `<option value="${ps}" ${ps===holdingPageSize?'selected':''}>${ps}行/页</option>`).join('')}
+        </select>
+        <button class="secondary" style="padding:3px 8px;font-size:11px;" ${holdingPage<=1?'disabled':''} onclick="changeHoldingPage(${holdingPage - 1})">上一页</button>
+        <span>${holdingPage} / ${totalHoldingPages}</span>
+        <button class="secondary" style="padding:3px 8px;font-size:11px;" ${holdingPage>=totalHoldingPages?'disabled':''} onclick="changeHoldingPage(${holdingPage + 1})">下一页</button>
+      </div>
     </div>
   `
   // 动态计算交易金额和发生金额的事件监听
@@ -1544,6 +1664,30 @@ function toggleTrades(code) {
   else expandedTradeCodes = [bare]
   // 切换明细时退出编辑状态
   editTradeId = null
+  renderHoldings(lastQuoteMap)
+}
+
+function changeHoldingPage(page) {
+  const totalPages = Math.ceil(currentHoldingList.length / holdingPageSize) || 1
+  holdingPage = Math.max(1, Math.min(page, totalPages))
+  renderHoldings(lastQuoteMap)
+}
+function changeHoldingPageSize(size) {
+  holdingPageSize = size
+  holdingPage = 1
+  renderHoldings(lastQuoteMap)
+}
+function changeTradePage(code, page) {
+  const bare = bareCode(code)
+  const s = currentHoldingList.find(x => bareCode(x.code) === bare)
+  const cnt = s ? s.trades.length : 0
+  const totalPages = Math.ceil(cnt / tradePageSize) || 1
+  tradePageMap[bare] = Math.max(1, Math.min(page, totalPages))
+  renderHoldings(lastQuoteMap)
+}
+function changeTradePageSize(size) {
+  tradePageSize = size
+  tradePageMap = {}
   renderHoldings(lastQuoteMap)
 }
 
