@@ -277,6 +277,8 @@ async function loadChart(period) {
   if (!currentChartCode) return
   // 切换视图时停止分时轮询
   if (chartTimer) { clearInterval(chartTimer); chartTimer = null }
+  // 保存滚动位置，避免切换K线周期时页面跳转
+  const savedScrollY = window.scrollY
   document.querySelectorAll('#chartCard .chart-tab').forEach(b => b.classList.toggle('active', b.dataset.period === period))
   const msgEl = document.getElementById('chartMsg')
   const container = document.getElementById('chartContainer')
@@ -319,9 +321,11 @@ async function loadChart(period) {
     } else {
       msgEl.innerHTML = '<div class="error-msg">暂无走势数据，可能该股票已停牌或数据源暂时不可用</div>'
     }
+    window.scrollTo(0, savedScrollY)
   } catch (e) {
     console.error('加载走势图错误详情:', e) // 调试日志
     msgEl.innerHTML = `<div class="error-msg">走势图加载失败（${e.message}）</div>`
+    window.scrollTo(0, savedScrollY)
   }
 }
 
