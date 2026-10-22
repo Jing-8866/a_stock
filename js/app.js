@@ -75,7 +75,16 @@ function showMsg(el, msg, type) {
 function normalizeCode(code) {
   code = code.trim().toLowerCase()
   if (/^\d{6}$/.test(code)) {
-    return code.startsWith('6') ? 'sh' + code : 'sz' + code
+    // 北交所股票：4xxxxx, 8xxxxx, 92xxxx
+    if (code.startsWith('4') || code.startsWith('8') || code.startsWith('92')) {
+      return 'bj' + code
+    }
+    // 沪市股票：6xxxxx
+    if (code.startsWith('6')) {
+      return 'sh' + code
+    }
+    // 深市股票：0xxxxx, 3xxxxx
+    return 'sz' + code
   }
   return code
 }
@@ -85,17 +94,144 @@ function bareCode(code) {
   return String(code || '').replace(/^(sh|sz|bj)/i, '')
 }
 
-// 获取市场归属（含板块：主板 / 创业板 / 科创板）
+// ============ 股票基础信息判断（公共函数） ============
+
+// 缓存：存储API返回的真实股票信息
+const stockInfoCache = new Map()
+const CACHE_DURATION = 60 * 60 * 1000 // 缓存1小时
+
+/**
+ * 设置股票信息缓存（从API获取后调用）
+ * @param {string} code - 股票代码
+ * @param {object} info - 股票信息 { market, board, type, name }
+ */
+function setStockInfoCache(code, info) {
+  if (!code || !info) return
+  const bare = bareCode(code)
+  stockInfoCache.set(bare, {
+    ...info,
+    timestamp: Date.now()
+  })
+}
+
+/**
+ * 获取股票信息缓存
+ * @param {string} code - 股票代码
+ * @returns {object|null} 缓存的股票信息或null
+ */
+function getStockInfoCache(code) {
+  if (!code) return null
+  const bare = bareCode(code)
+  const cached = stockInfoCache.get(bare)
+  if (!cached) return null
+  
+  // 检查缓存是否过期
+  if (Date.now() - cached.timestamp > CACHE_DURATION) {
+    stockInfoCache.delete(bare)
+    return null
+  }
+  
+  return cached
+}
+
+/**
+ * 判断股票市场（公共函数，优先使用缓存的真实数据）
+ * @param {string} code - 股票代码（可带sh/sz/bj前缀）
+ * @returns {string} 市场名称：沪市/深市/京市
+ */
+function getMarket(code) {
+  // 优先从缓存获取真实数据
+  const cached = getStockInfoCache(code)
+  if (cached && cached.market) return cached.market
+  
+  // 降级：通过代码判断
+  const num = bareCode(code)
+  if (!/^\d{6}$/.test(num)) return '未知'
+  // 优先判断可转债：11xxxx（深市）、12xxxx（沪市）、13xxxx（沪市）
+  if (num.startsWith('11')) return '深市'
+  if (num.startsWith('12') || num.startsWith('13')) return '沪市'
+  // 股票市场判断
+  // 注意：92xxxx 既可能是北交所也可能是科创板CDR，纯代码无法区分
+  // 实际使用时会优先用API真实数据（SECUCODE后缀），这里暂定为北交所（北交所92xxxx更多）
+  if (num.startsWith('92')) return '京市'
+  if (num.startsWith('6')) return '沪市'
+  if (num.startsWith('0') || num.startsWith('3')) return '深市'
+  if (num.startsWith('4') || num.startsWith('8')) return '京市'
+  return '未知'
+}
+
+/**
+ * 判断股票板块（公共函数，优先使用缓存的真实数据）
+ * @param {string} code - 股票代码（可带sh/sz/bj前缀）
+ * @returns {string} 板块名称：主板/创业板/科创板/北交所/未知
+ */
+function getBoard(code) {
+  // 优先从缓存获取真实数据
+  const cached = getStockInfoCache(code)
+  if (cached && cached.board) return cached.board
+  
+  // 降级：通过代码判断
+  const num = bareCode(code)
+  if (!/^\d{6}$/.test(num)) return '未知'
+  // 注意：92xxxx代码比较特殊
+  // - 北交所：SECUCODE以.BJ结尾（API真实数据优先）
+  // - 科创板CDR：SECUCODE以.SH结尾（API真实数据优先）
+  // - 纯代码推断时，无法区分，暂定为北交所（北交所92xxxx更多）
+  // 但由于优先使用API真实数据，实际会由extractStockInfoFromApi正确判断
+  if (num.startsWith('688') || num.startsWith('689')) return '科创板'
+  if (num.startsWith('92')) return '北交所'
+  if (num.startsWith('30')) return '创业板'
+  if (num.startsWith('60') || num.startsWith('0')) return '主板'
+  if (num.startsWith('4') || num.startsWith('8')) return '北交所'
+  return '未知'
+}
+
+/**
+ * 判断股票类型（公共函数，优先使用缓存的真实数据）
+ * @param {string} code - 股票代码（可带sh/sz/bj前缀）
+ * @returns {string} 类型：股/债
+ */
+function getStockType(code) {
+  // 优先从缓存获取真实数据
+  const cached = getStockInfoCache(code)
+  if (cached && cached.type) return cached.type
+  
+  // 降级：通过代码判断
+  const num = bareCode(code)
+  if (!/^\d{6}$/.test(num)) return null
+  // 可转债：11xxxx（深市）、12xxxx（沪市）、13xxxx
+  if (num.startsWith('11') || num.startsWith('12') || num.startsWith('13')) return '债'
+  return '股'
+}
+
+/**
+ * 获取市场归属（含板块）- 拼接格式
+ * @param {string} code - 股票代码（可带sh/sz/bj前缀）
+ * @returns {string} 市场板块：沪市(科创板)/深市(创业板)/沪市(主板)/深市(主板)/北交所
+ */
 function getMarketFromCode(code) {
-  code = String(code || '').trim().toLowerCase()
-  const num = code.replace(/^(sh|sz|bj)/, '')
-  if (!/^\d{6}$/.test(num)) return '未知市场'
-  if (num.startsWith('688') || num.startsWith('689')) return '沪市(科创板)'
-  if (num.startsWith('3')) return '深市(创业板)'
-  if (num.startsWith('6')) return '沪市(主板)'
-  if (num.startsWith('0')) return '深市(主板)'
-  if (num.startsWith('4') || num.startsWith('8') || num.startsWith('9')) return '北交所'
-  return '未知市场'
+  const market = getMarket(code)
+  const board = getBoard(code)
+  
+  // 北交所特殊处理
+  if (board === '北交所') return '北交所'
+  
+  // 其他市场拼接板块
+  if (board !== '未知' && market !== '未知') {
+    return `${market}(${board})`
+  }
+  
+  return market === '未知' ? '未知市场' : market
+}
+
+/**
+ * 类型标签样式：股=红色，债=蓝色
+ */
+function typeTag(type) {
+  if (!type) return ''
+  const color = type === '股' ? '#ff4646' : '#00d4ff'
+  const bg = type === '股' ? 'rgba(255,70,70,0.15)' : 'rgba(0,212,255,0.15)'
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${bg};color:${color};">${type}</span>`
 }
 
 // 读取返回条数限制（默认 10，范围 1-100）
@@ -203,6 +339,16 @@ async function runAnalyze(code) {
     const res = await fetch(`${API}/quote/${code}`)
     const data = await res.json()
     if (data.error) throw new Error(data.error)
+    
+    // 缓存股票信息（从API获取的真实数据）
+    if (data.market || data.board || data.type) {
+      setStockInfoCache(data.code, {
+        market: data.market,
+        board: data.board,
+        type: data.type,
+        name: data.name
+      })
+    }
     
     // 计算评分
     let score = 0
@@ -723,11 +869,9 @@ const MARKET_TABS = ['主板', '创业板', '科创板', '北交所']
 const PAGERS = {}
 
 function marketGroupOf(code) {
-  const m = getMarketFromCode(code)
-  if (m.indexOf('科创') >= 0) return '科创板'
-  if (m.indexOf('创业') >= 0) return '创业板'
-  if (m.indexOf('主板') >= 0) return '主板'
-  if (m.indexOf('北交所') >= 0) return '北交所'
+  // 使用公共函数获取板块
+  const board = getBoard(code)
+  if (board !== '未知') return board
   return '其它'
 }
 
@@ -814,10 +958,22 @@ async function scanMarket() {
       return
     }
 
+    // 缓存全市场扫描数据中的股票信息
+    stocks.forEach(s => {
+      if (s.market || s.board || s.type) {
+        setStockInfoCache(s.code, {
+          market: s.market,
+          board: s.board,
+          type: s.type,
+          name: s.name
+        })
+      }
+    })
+
     createPagedMarketTable('scanResult', stocks, {
       topHtml: `<div style="margin-bottom:10px;"><span class="tag tag-info">涨幅前${stocks.length}</span></div>`,
-      head: `<tr><th>排名</th><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>PE</th><th>操作</th></tr>`,
-      cols: 8,
+      head: `<tr><th>排名</th><th>类型</th><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>PE</th><th>操作</th></tr>`,
+      cols: 9,
       row: (s, rank) => {
         const market = getMarketFromCode(s.code || '')
         const code = s.code || 'N/A'
@@ -828,6 +984,7 @@ async function scanMarket() {
         return `
         <tr>
           <td>${rank}</td>
+          <td>${typeTag(getStockType(code))}</td>
           <td><span style="color:#6a7a9e;">${market}</span></td>
           <td><span style="color:var(--cyan);font-weight:600;">${bareCode(code)}</span></td>
           <td>${name}</td>
@@ -869,8 +1026,8 @@ async function loadRank(type, order) {
     const isPct = type === 'changePercent'
     createPagedMarketTable('scanResult', stocks, {
       topHtml: `<div style="margin-bottom:10px;"><span class="tag tag-info">${label}排行 TOP${stocks.length}</span></div>`,
-      head: `<tr><th>排名</th><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>${label}</th><th>操作</th></tr>`,
-      cols: 7,
+      head: `<tr><th>排名</th><th>类型</th><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>${label}</th><th>操作</th></tr>`,
+      cols: 8,
       row: (s, rank) => {
         const market = getMarketFromCode(s.code || '')
         const code = s.code || 'N/A'
@@ -881,6 +1038,7 @@ async function loadRank(type, order) {
         return `
         <tr>
           <td>${rank}</td>
+          <td>${typeTag(getStockType(code))}</td>
           <td><span style="color:#6a7a9e;">${market}</span></td>
           <td><span style="color:var(--cyan);font-weight:600;">${bareCode(code)}</span></td>
           <td>${name}</td>
@@ -988,8 +1146,8 @@ async function runScreener() {
           <span class="tag tag-info">筛选结果 (共 ${total} 只，显示前 ${stocks.length} 只)</span>
           <span style="margin-left:10px;color:#6a7a9e;font-size:12px;">筛选条件: ${conditions.map(c => `${c.field} ${c.operator} ${c.value}`).join('; ')}</span>
         </div>`,
-      head: `<tr><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>PE</th><th>PB</th><th>操作</th></tr>`,
-      cols: 8,
+      head: `<tr><th>类型</th><th>市场</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>PE</th><th>PB</th><th>操作</th></tr>`,
+      cols: 9,
       row: (s) => {
         const market = getMarketFromCode(s.code || '')
         const code = s.code || 'N/A'
@@ -1000,6 +1158,7 @@ async function runScreener() {
         const pb = s.pb
         return `
         <tr>
+          <td>${typeTag(getStockType(code))}</td>
           <td><span style="color:#6a7a9e;">${market}</span></td>
           <td><span style="color:var(--cyan);font-weight:600;">${bareCode(code)}</span></td>
           <td>${name}</td>
@@ -1037,7 +1196,7 @@ function renderWatchlist(list) {
       ${list.map(item => `
         <div class="stock-item" style="margin-bottom:0;">
           <div style="min-width:0;flex:1;">
-            <div style="margin-bottom:3px;font-size:12px;color:#6a7a9e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${getStockDisplay(item.code, item.name)}</div>
+            <div style="margin-bottom:3px;font-size:12px;color:#6a7a9e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${typeTag(getStockType(item.code))} ${getStockDisplay(item.code, item.name)}</div>
             <div style="display:flex;align-items:center;">
               <span style="font-size:17px;font-weight:600;">${item.price != null ? formatNumber(item.price, 2) : 'N/A'}</span>
               ${item.changePercent !== undefined && item.changePercent !== null ? `<span style="margin-left:8px;color:${item.changePercent>=0?'#ff4646':'#00c864'}">${item.changePercent>=0?'+':''}${formatNumber(item.changePercent, 2)}%</span>` : ''}
@@ -1070,6 +1229,19 @@ async function loadWatchlist() {
       })
       const data = await res.json()
       const arr = Array.isArray(data) ? data : (data.results || [])
+      
+      // 缓存批量行情数据中的股票信息
+      arr.forEach(s => {
+        if (s.market || s.board || s.type) {
+          setStockInfoCache(s.code, {
+            market: s.market,
+            board: s.board,
+            type: s.type,
+            name: s.name
+          })
+        }
+      })
+      
       const updated = watchlist.map(item => {
         const realtime = arr.find(s => s.code === item.code || s.code === String(item.code).replace(/^(sh|sz|bj)/, ''))
         if (realtime) {
@@ -1492,7 +1664,12 @@ function renderHoldings(quoteMap = {}) {
         latestTime: g.latestTime || ''
       }
     })
-    .sort((a, b) => new Date(b.latestTime) - new Date(a.latestTime))
+    .sort((a, b) => {
+      const aHold = a.qty > 0 ? 1 : 0
+      const bHold = b.qty > 0 ? 1 : 0
+      if (aHold !== bHold) return bHold - aHold
+      return new Date(b.latestTime) - new Date(a.latestTime)
+    })
     .filter(s => showCleared || s.qty > 0)
 
   currentHoldingList = list
@@ -1587,7 +1764,7 @@ function renderHoldings(quoteMap = {}) {
             : 'N/A'
           return `
           <tr>
-            <td><b>${s.name || ''}</b><br><span style="color:#6a7a9e;font-size:11px;">${bare}</span></td>
+            <td>${typeTag(getStockType(s.code))} <b>${s.name || ''}</b><br><span style="color:#6a7a9e;font-size:11px;">${bare}</span></td>
             <td>${formatNumber(s.cost, 3)}</td>
             <td>${s.qty}</td>
             <td>${hasQuote ? formatNumber(price, 2) : 'N/A'}</td>
@@ -1632,8 +1809,8 @@ function renderHoldings(quoteMap = {}) {
 }
 
 function switchMainTab(tab) {
-  const tabs = ['analyze', 'watchlist', 'holdings', 'scan', 'screener', 'asset']
-  const cardIds = { analyze: 'analyzeCard', watchlist: 'watchlistCard', holdings: 'holdingsCard', scan: 'scanCard', screener: 'screenerCard', asset: 'assetCard' }
+  const tabs = ['analyze', 'watchlist', 'holdings', 'scan', 'screener', 'asset', 'ipo']
+  const cardIds = { analyze: 'analyzeCard', watchlist: 'watchlistCard', holdings: 'holdingsCard', scan: 'scanCard', screener: 'screenerCard', asset: 'assetCard', ipo: 'ipoCard' }
   tabs.forEach(t => {
     const card = document.getElementById(cardIds[t])
     if (card) card.style.display = (t === tab) ? '' : 'none'
@@ -1659,6 +1836,102 @@ function switchMainTab(tab) {
     }
     loadAssetAnalysis()
   }
+  if (tab === 'ipo') loadIPO()
+}
+
+let ipoStatusFilter = '待发行'
+let ipoAllItems = []
+
+async function loadIPO() {
+  const msgEl = document.getElementById('ipoMsg')
+  const resultEl = document.getElementById('ipoResult')
+  msgEl.innerHTML = '<span class="loading"></span>加载打新数据...'
+  resultEl.style.display = 'none'
+  try {
+    const res = await fetch(`${API}/ipo`)
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+    msgEl.innerHTML = ''
+    ipoAllItems = data.items || []
+    
+    // 缓存打新日历数据中的股票信息（后端已返回真实数据）
+    ipoAllItems.forEach(item => {
+      if (item.market || item.board || item.type) {
+        setStockInfoCache(item.code, {
+          market: item.market,
+          board: item.board,
+          type: item.type,
+          name: item.name
+        })
+      }
+    })
+    
+    renderIPO()
+  } catch (e) {
+    msgEl.innerHTML = `<div class="error-msg">打新数据加载失败（${e.message}）</div>`
+  }
+}
+
+function renderIPO() {
+  const resultEl = document.getElementById('ipoResult')
+  const showBond = document.getElementById('ipoShowBond')
+  const showBondChecked = showBond ? showBond.checked : true
+  const items = ipoAllItems.filter(i => showBondChecked || i.type !== '债')
+  const todayItems = items.filter(i => i.status === '可申购')
+  const otherItems = items.filter(i => i.status !== '可申购').sort((a, b) => (b.applyDate || '').localeCompare(a.applyDate || ''))
+  const filteredOther = otherItems.filter(i => i.status === ipoStatusFilter)
+  const tableHTML = list => `
+    <table>
+      <thead><tr><th>类型</th><th>名称</th><th>代码</th><th>发行价</th><th>市场</th><th>板块</th><th>发行日期</th><th>上市日期</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        ${list.map(item => `
+        <tr>
+          <td>${typeTag(item.type)}</td>
+          <td><b>${item.name}</b></td>
+          <td>${item.code}</td>
+          <td>${item.price > 0 ? formatNumber(item.price, 2) : 'N/A'}</td>
+          <td>${item.market}</td>
+          <td>${item.board}</td>
+          <td>${item.applyDate || '-'}</td>
+          <td>${item.listingDate || '-'}</td>
+          <td>${item.status}</td>
+          <td><button class="secondary" style="padding:3px 10px;font-size:11px;" onclick="viewIPOQuote('${item.code}', '${item.name}', '${item.type}')">行情</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`
+  let html = ''
+  html += `<div style="margin-bottom:8px;font-size:14px;font-weight:bold;color:#c8d6e5;">📋 今日可申购（${todayItems.length} 个）</div>`
+  html += todayItems.length ? `<div style="overflow-x:auto;margin-bottom:20px;">${tableHTML(todayItems)}</div>` : `<div style="color:#6a7a9e;margin-bottom:20px;">暂无今日可申购标的</div>`
+  const statusOptions = ['待发行', '已发行待上市', '已上市']
+  html += `<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px;">
+    <span style="font-size:14px;font-weight:bold;color:#c8d6e5;">📅 近期标的（${otherItems.length} 个）</span>
+    <select onchange="changeIPOStatus(this.value)" class="asset-select" style="font-size:12px;">
+      ${statusOptions.map(s => `<option value="${s}" ${s===ipoStatusFilter?'selected':''}>${s}</option>`).join('')}
+    </select>
+  </div>`
+  html += filteredOther.length ? `<div style="overflow-x:auto;">${tableHTML(filteredOther)}</div>` : `<div style="color:#6a7a9e;">暂无${ipoStatusFilter}标的</div>`
+  resultEl.style.display = 'block'
+  resultEl.innerHTML = html
+}
+
+// 打新TAB点击行情按钮：跳转到单股分析查看行情
+function viewIPOQuote(code, name, type) {
+  // 去掉市场前缀，只保留6位代码
+  const bare = bareCode(code)
+  // 填充股票代码到单股分析输入框
+  document.getElementById('stockCode').value = bare
+  // 切换到单股分析TAB
+  switchMainTab('analyze')
+  // 执行分析
+  analyzeStock()
+  // 滚动到单股分析区域
+  const card = document.getElementById('analyzeCard')
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function changeIPOStatus(status) {
+  ipoStatusFilter = status
+  renderIPO()
 }
 
 function toggleTrades(code) {
@@ -1731,6 +2004,19 @@ async function loadHoldings() {
       })
       const data = await res.json()
       const arr = Array.isArray(data) ? data : (data.results || [])
+      
+      // 缓存批量行情数据中的股票信息
+      arr.forEach(rt => {
+        if (rt.market || rt.board || rt.type) {
+          setStockInfoCache(rt.code, {
+            market: rt.market,
+            board: rt.board,
+            type: rt.type,
+            name: rt.name
+          })
+        }
+      })
+      
       arr.forEach(rt => {
         const a = rt.price || 0
         const yc = rt.yesterdayClose > 0 ? rt.yesterdayClose : ((a > 0 && rt.change) ? a - rt.change : 0)
@@ -1995,45 +2281,53 @@ async function buildDailyData(tradeList) {
   const allDateSet = new Set()
   
   // 步骤4：只获取期间内有持仓的股票的K线数据
+  // 优化：先同步构建所有 st 对象（纯本地），再对 K 线请求做受控并发（限流 + 失败互不影响）
   for (const c of codes) {
     const bare = bareCode(c)
     const st = { code: bare, name: (tradeList.find(t => bareCode(t.code) === bare) || {}).name || bare, closes: {}, orders: {}, dayPnl: {}, hold: {} }
-    
+
     // 收集交易明细（所有历史交易，用于计算累计持仓）
     tradeList.filter(t => bareCode(t.code) === bare).forEach(t => {
       const d = String(t.time).slice(0, 10)
       if (!st.orders[d]) st.orders[d] = { buyQty: 0, sellQty: 0, buyAmt: 0, sellAmt: 0 }
-      if (t.type === 'buy') { 
-        st.orders[d].buyQty += t.qty; 
+      if (t.type === 'buy') {
+        st.orders[d].buyQty += t.qty;
         const actualAmount = t.actualAmount !== undefined ? t.actualAmount : (t.price * t.qty + (t.fee || 0));
         st.orders[d].buyAmt += actualAmount;
-      } else { 
-        st.orders[d].sellQty += t.qty; 
+      } else {
+        st.orders[d].sellQty += t.qty;
         const actualAmount = t.actualAmount !== undefined ? t.actualAmount : (t.price * t.qty - (t.fee || 0));
         st.orders[d].sellAmt += actualAmount;
       }
     })
-    
-    // 获取K线数据（只获取期间相关的数据）
+
+    st._fullCode = c // 暂存带前缀的完整代码，供下方拉K线使用，用完即删
+    stocks.push(st)
+  }
+
+  // 获取K线数据（受控并发）：从最早交易日期到期间结束，估算条数（最多1000条）
+  const klineCount = Math.min(1000, Math.ceil((new Date(periodEnd) - new Date(firstTradeDate)) / (1000 * 60 * 60 * 24)) + 10)
+
+  // 单只股票的K线拉取：失败时静默降级（仅统计已实现交易差额），不影响其它股票
+  const fetchKlineFor = async (st) => {
     try {
-      // 计算需要获取的K线条数：从最早交易日期到期间结束
-      const klineStartDate = firstTradeDate
-      const klineEndDate = periodEnd
-      // 估算K线条数（最多1000条）
-      const klineCount = Math.min(1000, Math.ceil((new Date(klineEndDate) - new Date(klineStartDate)) / (1000 * 60 * 60 * 24)) + 10)
-      
-      const res = await fetch(`${API}/kline/${c}?period=day&count=${klineCount}`)
+      const res = await fetch(`${API}/kline/${st._fullCode}?period=day&count=${klineCount}`)
       const data = await res.json()
-      ;(data.klines || []).forEach(k => { 
-        if (k.date && k.date >= firstTradeDate && k.date <= klineEndDate) {
+      ;(data.klines || []).forEach(k => {
+        if (k.date && k.date >= firstTradeDate && k.date <= periodEnd) {
           st.closes[k.date] = k.close
-          allDateSet.add(k.date)
+          allDateSet.add(k.date) // 单线程下 Set.add 之间不会被 await 打断，并发写入安全
         }
       })
     } catch (e) { /* 无K线时仅统计已实现交易差额 */ }
-    
-    stocks.push(st)
   }
+
+  // 限制并发数，避免对本地桥接服务 → 外部行情接口造成限流
+  const KLINE_CONCURRENCY = 5
+  for (let i = 0; i < stocks.length; i += KLINE_CONCURRENCY) {
+    await Promise.allSettled(stocks.slice(i, i + KLINE_CONCURRENCY).map(fetchKlineFor))
+  }
+  stocks.forEach(st => { delete st._fullCode }) // 清理临时字段
   
   // days 从交易日期和K线日期中合并，确保包含持仓期间的所有交易日
   let days = [...new Set([...tradeDateSet, ...allDateSet])].filter(d => d >= periodStart && d <= periodEnd).sort()
