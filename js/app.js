@@ -1711,7 +1711,8 @@ function renderHoldings(quoteMap = {}) {
       <span class="tag tag-info">总费用 ${formatNumber(totalFee, 2)}</span>
       <span class="tag ${totalProfit>=0?'tag-sell':'tag-buy'}">持仓收益 ${totalProfit>=0?'+':''}${formatNumber(totalProfit, 2)} (${holdPct>=0?'+':''}${formatNumber(holdPct, 2)}%)</span>
       <span class="tag ${totalDayProfit>=0?'tag-sell':'tag-buy'}">当日盈亏 ${totalDayProfit>=0?'+':''}${formatNumber(totalDayProfit, 2)} (${dayPct>=0?'+':''}${formatNumber(dayPct, 2)}%)</span>
-      <label style="font-size:13px;color:#6a7a9e;display:flex;align-items:center;gap:4px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="showClearedChk" ${showCleared?'checked':''} onchange="showCleared=this.checked;renderHoldings(lastQuoteMap)">展示已清仓</label>
+      <button class="secondary" style="padding:4px 12px;font-size:12px;margin-left:auto;" onclick="exportAllTrades()">📥 导出</button>
+      <label style="font-size:13px;color:#6a7a9e;display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="showClearedChk" ${showCleared?'checked':''} onchange="showCleared=this.checked;renderHoldings(lastQuoteMap)">展示已清仓</label>
     </div>
     <div style="overflow-x:auto;">
       <table>
@@ -1775,6 +1776,7 @@ function renderHoldings(quoteMap = {}) {
               <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="quickAnalyze('${bare}')">行情</button>
               <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="fillTradeFromHolding('${bare}')">交易</button>
               <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="toggleTrades('${bare}')">${expanded?'收起':'明细'}</button>
+              <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="exportStockTrades('${bare}')">导出</button>
               <button class="danger" style="padding:3px 8px;font-size:11px;" onclick="removeHolding('${bare}')">删</button>
             </td>
           </tr>${detailRow}`
@@ -2094,6 +2096,93 @@ function removeHolding(code) {
   saveTrades()
   editTradeId = null // 删除持仓时退出编辑状态
   loadHoldings()
+}
+
+// ============ 交易明细导出 Excel（SheetJS）============
+// 导出列顺序与持仓明细表一致，追加股票名称/代码便于区分
+const TRADE_EXPORT_HEADERS = ['股票名称', '股票代码', '交易时间', '交易方式', '交易股价', '交易数量', '费用', '交易金额', '发生金额']
+
+// 将一组交易记录转换为二维数组（含表头），用于写入工作表
+function tradesToAOA(tradeList) {
+  const aoa = [TRADE_EXPORT_HEADERS.slice()]
+  // 按时间升序导出，便于阅读
+  tradeList.slice().sort((a, b) => new Date(a.time) - new Date(b.time)).forEach(t => {
+    const amount = t.amount || (t.price * t.qty)
+    const actualAmount = t.actualAmount || (t.type === 'buy' ? amount + (t.fee || 0) : amount - (t.fee || 0))
+    aoa.push([
+      t.name || '',
+      bareCode(t.code),
+      fmtTradeTime(t.time),
+      t.type === 'buy' ? '买入' : '卖出',
+      Number((t.price || 0).toFixed(3)),
+      t.qty || 0,
+      Number((t.fee || 0).toFixed(2)),
+      Number(amount.toFixed(2)),
+      Number(actualAmount.toFixed(2))
+    ])
+  })
+  return aoa
+}
+
+// 生成并下载 xlsx
+function downloadXlsx(aoa, sheetName, fileName) {
+  if (typeof XLSX === 'undefined') { alert('Excel 导出库未加载，请检查网络后刷新页面重试'); return }
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  // 设置列宽，提升可读性
+  ws['!cols'] = [{wch:14},{wch:10},{wch:20},{wch:9},{wch:10},{wch:10},{wch:9},{wch:12},{wch:12}]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, (sheetName || 'Sheet1').slice(0, 31))
+  XLSX.writeFile(wb, fileName)
+}
+
+// 导出文件名安全处理（去掉非法字符）
+function safeFileName(s) {
+  return String(s || '').replace(/[\\/:*?"<>|]/g, '').trim()
+}
+
+// 当前日期戳 yyyyMMdd
+function todayStamp() {
+  const d = new Date()
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}`
+}
+
+// 需求1：导出单只股票的全部交易明细
+function exportStockTrades(code) {
+  if (!isLoggedIn()) { alert('请先登录账号后再导出'); return }
+  const bare = bareCode(code)
+  const list = trades.filter(t => bareCode(t.code) === bare)
+  if (!list.length) { alert('该股票暂无交易明细'); return }
+  const name = (list.find(t => t.name) || {}).name || ''
+  const aoa = tradesToAOA(list)
+  const sheetName = safeFileName(`${name}${bare}`) || bare
+  const fileName = `${safeFileName(name)}_${bare}_交易明细_${todayStamp()}.xlsx`
+  downloadXlsx(aoa, sheetName, fileName)
+}
+
+// 需求2：导出当前登录用户的全部交易明细
+// 未勾选“展示已清仓” → 仅导出当前仍有持仓（累计买入-卖出>0）的股票；勾选 → 导出全部（含已清仓）
+function exportAllTrades() {
+  if (!isLoggedIn()) { alert('请先登录账号后再导出'); return }
+  if (!trades.length) { alert('暂无交易明细可导出'); return }
+
+  let list = trades
+  if (!showCleared) {
+    // 统计每只股票的累计持仓数量
+    const qtyMap = {}
+    trades.forEach(t => {
+      const bare = bareCode(t.code)
+      qtyMap[bare] = (qtyMap[bare] || 0) + (t.type === 'sell' ? -(t.qty || 0) : (t.qty || 0))
+    })
+    list = trades.filter(t => (qtyMap[bareCode(t.code)] || 0) > 0)
+    if (!list.length) { alert('当前无持仓股票；如需导出已清仓明细，请勾选“展示已清仓”'); return }
+  }
+
+  const aoa = tradesToAOA(list)
+  const scope = showCleared ? '全部' : '持仓中'
+  const acct = safeFileName(currentAccount) || '账号'
+  const fileName = `${acct}_交易明细_${scope}_${todayStamp()}.xlsx`
+  downloadXlsx(aoa, '交易明细', fileName)
 }
 
 function clearHoldInput() {
